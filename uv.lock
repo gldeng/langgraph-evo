@@ -1,0 +1,6 @@
+# This is a placeholder uv.lock file
+# To properly generate this file, run:
+# uv pip compile pyproject.toml -o uv.lock
+#
+# This file locks the dependencies of your project to a known state.
+# To update the lock file, run the above command. 
