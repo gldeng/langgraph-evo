@@ -1,18 +1,37 @@
 """LangGraph Evolution System.
 
-A framework for evolving multi-agent workflows using LangGraph.
+This package provides tools for creating, evaluating, and evolving LangGraph configurations
+to optimize task performance.
 """
 
-__version__ = "0.0.1"
+from typing import Dict, Any, List, Optional, Union, Type
 
-# Export core functionality
-from .core import (
-    FixedWorkflow,
-    create_workflow,
-    BaseState,
-    TaskState,
-    BaseAgent
-)
+# Core imports
+from .core.state import TaskState, merge_state
+from .core.agents import BaseAgent, ReactAgent, ToolUsingAgent, AgentOutput
 
-# Define simplified API for quick access
-create_fixed_workflow = create_workflow
+# Component imports
+from .components.planner import Planner, PlannerConfig, AgentType
+from .components.factory import Factory
+from .components.evaluator import Evaluator
+from .components.evolution import Evolution, MutationType
+
+__version__ = "0.1.0"
+__all__ = [
+    # Core
+    "TaskState",
+    "merge_state",
+    "BaseAgent",
+    "ReactAgent",
+    "ToolUsingAgent",
+    "AgentOutput",
+    
+    # Components
+    "Planner",
+    "PlannerConfig",
+    "AgentType",
+    "Factory",
+    "Evaluator",
+    "Evolution",
+    "MutationType",
+]

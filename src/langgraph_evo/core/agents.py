@@ -1,236 +1,272 @@
-"""Agent interfaces for LangGraph Evolution System workflows.
+"""Base agent implementations for LangGraph Evolution System.
 
-This module provides simple agent interfaces that serve as nodes in the workflow.
+This module provides base agent classes and interfaces for the LangGraph Evolution System.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol, Union
+import logging
 
-from .state import TaskState
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
+from langchain_core.tools import BaseTool
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
-class BaseAgent:
-    """Base class for all workflow agents.
+class AgentOutput(Protocol):
+    """Protocol for agent outputs."""
+    output: str
+
+
+class BaseAgent(Protocol):
+    """Base agent protocol for LangGraph Evolution System.
     
-    Agents are the processing units that operate as nodes in the workflow graph.
-    Each agent takes the workflow state, performs some operations, and returns 
-    an updated state.
+    This defines the interface that all agents in the system must implement.
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the agent with optional configuration."""
-        self.config = config or {}
-    
-    def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Process the current state and return an updated state.
+    def invoke(self, input_data: Dict[str, Any]) -> AgentOutput:
+        """Invoke the agent with the given input data.
         
         Args:
-            state: The current workflow state
+            input_data: Input data for the agent, including 'input' and optional 'history'
             
         Returns:
-            An updated workflow state
+            An AgentOutput object containing the agent's response
         """
-        # Default implementation does nothing
-        return state
+        ...
 
 
-class InputProcessorAgent(BaseAgent):
-    """Agent for processing input data.
+class ReactAgent:
+    """A basic ReAct pattern agent implementation.
     
-    This agent is responsible for validating and preparing the input data
-    for further processing in the workflow.
+    This agent uses the ReAct pattern (Reason, Act) for handling tasks.
     """
     
-    def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Process the input data.
+    def __init__(
+        self,
+        model: BaseChatModel,
+        tools: Optional[List[BaseTool]] = None,
+        system_message: Optional[str] = None
+    ):
+        """Initialize the ReactAgent.
         
         Args:
-            state: The current workflow state
+            model: The LLM to use for the agent
+            tools: Optional tools available to the agent
+            system_message: Optional system message for the agent
+        """
+        self.model = model
+        self.tools = tools or []
+        self.system_message = system_message or (
+            "You are a helpful AI assistant that solves tasks step-by-step. "
+            "Think carefully about the problem, break it down, and provide detailed solutions."
+        )
+        logger.info(f"Initialized ReactAgent with {len(self.tools)} tools")
+    
+    def invoke(self, input_data: Dict[str, Any]) -> AgentOutput:
+        """Invoke the agent with the given input data.
+        
+        Args:
+            input_data: Input data for the agent, including 'input' and optional 'history'
             
         Returns:
-            Updated state with processed input
+            An AgentOutput object containing the agent's response
         """
-        # Get the task input
-        task_input = state.get("task_input", {})
+        input_text = input_data.get("input", "")
+        history = input_data.get("history", [])
         
-        # Simulate input processing (in a real implementation, we'd do actual validation)
-        processed_input = {
-            "query": task_input.get("query", "No query provided"),
-            "parameters": task_input.get("options", {}),
-            "metadata": {
-                "time_received": "2024-05-08T00:00:00Z",  # In production, use real timestamp
-                "source": "api"
-            }
-        }
+        # Create the messages list
+        messages = []
         
-        # Update the state with processed input
-        state["task_input"] = processed_input
+        # Add system message
+        messages.append(SystemMessage(content=self.system_message))
         
-        # Add a step for tracking
-        if "steps" not in state:
-            state["steps"] = []
-            
-        state["steps"].append({
-            "agent": "InputProcessor",
-            "action": "process_input",
-            "input_size": len(str(task_input)),
-            "timestamp": "2024-05-08T00:00:00Z"  # In production, use real timestamp
-        })
+        # Add history
+        messages.extend(history)
         
-        return state
+        # Add the current input as a human message
+        messages.append(HumanMessage(content=input_text))
+        
+        # Invoke the model
+        try:
+            response = self.model.invoke(messages)
+            return AgentOutput(output=response.content)
+        except Exception as e:
+            logger.error(f"Error invoking ReactAgent: {e}")
+            return AgentOutput(output=f"Error: {str(e)}")
 
 
-class TaskAnalyzerAgent(BaseAgent):
-    """Agent for analyzing the task.
+class ToolUsingAgent:
+    """An agent that can use tools to solve tasks.
     
-    This agent is responsible for understanding the task requirements
-    and providing analysis that can guide the task execution.
+    This agent has access to tools and can decide when to use them.
     """
     
-    def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze the task.
+    def __init__(
+        self,
+        model: BaseChatModel,
+        tools: List[BaseTool],
+        system_message: Optional[str] = None,
+        max_iterations: int = 10
+    ):
+        """Initialize the ToolUsingAgent.
         
         Args:
-            state: The current workflow state
-            
-        Returns:
-            Updated state with task analysis
+            model: The LLM to use for the agent
+            tools: Tools available to the agent
+            system_message: Optional system message for the agent
+            max_iterations: Maximum number of tool-using iterations
         """
-        # Simulate task analysis (in a real implementation, we'd use LLMs or other logic)
-        analysis = {
-            "task_type": "text_processing",
-            "complexity": "medium",
-            "estimated_time": "5 minutes"
-        }
+        self.model = model
+        self.tools = tools
+        self.system_message = system_message or (
+            "You are a helpful AI assistant with access to tools. "
+            "Use these tools appropriately to solve tasks."
+        )
+        self.max_iterations = max_iterations
         
-        # Update the state with the analysis
-        if "context" not in state:
-            state["context"] = {}
-            
-        state["context"]["analysis"] = analysis
+        # Create tool descriptions
+        self.tool_descriptions = "\n".join(
+            f"- {tool.name}: {tool.description}" for tool in self.tools
+        )
         
-        # Add a step for tracking
-        if "steps" not in state:
-            state["steps"] = []
-            
-        state["steps"].append({
-            "agent": "TaskAnalyzer",
-            "action": "analyze_task",
-            "analysis": analysis,
-            "timestamp": "2024-05-08T00:00:01Z"  # In production, use real timestamp
-        })
+        # Create tool map for lookup
+        self.tool_map = {tool.name: tool for tool in self.tools}
         
-        return state
-
-
-class TaskExecutorAgent(BaseAgent):
-    """Agent for executing the task.
+        logger.info(f"Initialized ToolUsingAgent with {len(self.tools)} tools")
     
-    This agent is responsible for the actual execution of the task
-    based on the input and analysis provided by previous agents.
-    """
-    
-    def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the task.
+    def _extract_tool_calls(self, message_content: str) -> List[Dict[str, str]]:
+        """Extract tool calls from message content.
+        
+        This is a simple extraction based on text patterns. In a real system,
+        this would use more robust parsing based on the model's structured output format.
         
         Args:
-            state: The current workflow state
+            message_content: The message content to parse
             
         Returns:
-            Updated state with task execution results
+            List of tool calls, each with 'name' and 'arguments' keys
         """
-        # Get task details
-        task_id = state.get("task_id", "unknown")
-        task_input = state.get("task_input", {})
+        tool_calls = []
         
-        # Simulate task execution (in a real implementation, we'd do actual work)
-        task_output = {
-            "output": f"Processed task {task_id} successfully",
-            "metadata": {
-                "task_id": task_id,
-                "processing_steps": 2,
-                "task_type": state.get("context", {}).get("analysis", {}).get("task_type", "unknown")
-            }
-        }
-        
-        # Update the state with the execution results
-        state["task_output"] = task_output
-        
-        # Add a step for tracking
-        if "steps" not in state:
-            state["steps"] = []
-            
-        state["steps"].append({
-            "agent": "TaskExecutor",
-            "action": "execute_task",
-            "execution_time": "1.2s",  # In production, measure real time
-            "timestamp": "2024-05-08T00:00:02Z"  # In production, use real timestamp
-        })
-        
-        return state
-
-
-class OutputFormatterAgent(BaseAgent):
-    """Agent for formatting the output.
-    
-    This agent is responsible for formatting the task execution results
-    into the final output format.
-    """
-    
-    def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Format the output.
-        
-        Args:
-            state: The current workflow state
-            
-        Returns:
-            Updated state with formatted output
-        """
-        # Check if we're in an error state - either via error or error_present flag
-        if state.get("error") is not None or state.get("error_present", False):
-            # If there's an error, don't try to format the output
-            # Just add a step to record that we were here
-            if "steps" not in state:
-                state["steps"] = []
+        # Very simple parsing - in a real system this would be more robust
+        content = message_content.lower()
+        for tool_name in self.tool_map:
+            if f"use {tool_name}" in content or f"use the {tool_name}" in content:
+                # Extract arguments - this is a simplistic approach
+                start_idx = content.find(tool_name) + len(tool_name)
+                end_idx = content.find("\n", start_idx)
+                if end_idx == -1:
+                    end_idx = len(content)
+                    
+                args_text = content[start_idx:end_idx].strip()
                 
-            state["steps"].append({
-                "agent": "OutputFormatter",
-                "action": "format_output",
-                "status": "skipped_due_to_error",
-                "timestamp": "2024-05-08T00:00:03Z"  # In production, use real timestamp
-            })
-            
-            return state
-            
-        # Get task output
-        task_output = state.get("task_output")
+                tool_calls.append({
+                    "name": tool_name,
+                    "arguments": args_text
+                })
         
-        # If no task output is available, create a placeholder
-        if task_output is None:
-            task_output = {
-                "output": "No output available",
-                "metadata": {
-                    "task_id": state.get("task_id", "unknown"),
-                    "status": "no_output"
-                }
-            }
+        return tool_calls
+    
+    def invoke(self, input_data: Dict[str, Any]) -> AgentOutput:
+        """Invoke the agent with the given input data.
+        
+        Args:
+            input_data: Input data for the agent, including 'input' and optional 'history'
             
-        # Format the output (in a real implementation, we might transform it)
-        formatted_output = {
-            "result": task_output.get("output", "No output generated"),
-            "metadata": task_output.get("metadata", {})
-        }
+        Returns:
+            An AgentOutput object containing the agent's response
+        """
+        input_text = input_data.get("input", "")
+        history = input_data.get("history", [])
         
-        # Update the state with the formatted output
-        state["task_output"] = formatted_output
+        # Create the initial messages list
+        messages = []
         
-        # Add a step for tracking
-        if "steps" not in state:
-            state["steps"] = []
+        # Add system message with tool descriptions
+        full_system_message = (
+            f"{self.system_message}\n\n"
+            f"You have access to the following tools:\n{self.tool_descriptions}\n\n"
+            "To use a tool, clearly state 'I'll use the TOOL_NAME' followed by the necessary arguments."
+        )
+        messages.append(SystemMessage(content=full_system_message))
+        
+        # Add history
+        messages.extend(history)
+        
+        # Add the current input as a human message
+        messages.append(HumanMessage(content=input_text))
+        
+        # Conversation tracking
+        conversation = []
+        
+        # Tool use loop
+        iterations = 0
+        while iterations < self.max_iterations:
+            iterations += 1
             
-        state["steps"].append({
-            "agent": "OutputFormatter",
-            "action": "format_output",
-            "timestamp": "2024-05-08T00:00:03Z"  # In production, use real timestamp
-        })
+            try:
+                # Invoke the model
+                response = self.model.invoke(messages)
+                conversation.append(response)
+                
+                # Check for tool calls
+                tool_calls = self._extract_tool_calls(response.content)
+                
+                if not tool_calls:
+                    # No tool calls, return the response
+                    return AgentOutput(output=response.content)
+                
+                # Process tool calls
+                for tool_call in tool_calls:
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["arguments"]
+                    
+                    if tool_name in self.tool_map:
+                        tool = self.tool_map[tool_name]
+                        
+                        # Execute the tool (in a real system, this would properly parse arguments)
+                        try:
+                            tool_result = tool.invoke(tool_args)
+                            
+                            # Add tool result to messages
+                            messages.append(AIMessage(content=response.content))
+                            messages.append(
+                                HumanMessage(
+                                    content=f"Tool {tool_name} returned: {tool_result}"
+                                )
+                            )
+                            
+                            # Add to conversation
+                            conversation.append(
+                                HumanMessage(
+                                    content=f"Tool {tool_name} returned: {tool_result}"
+                                )
+                            )
+                        except Exception as e:
+                            # Add error message
+                            messages.append(AIMessage(content=response.content))
+                            messages.append(
+                                HumanMessage(
+                                    content=f"Error using tool {tool_name}: {str(e)}"
+                                )
+                            )
+                            
+                            # Add to conversation
+                            conversation.append(
+                                HumanMessage(
+                                    content=f"Error using tool {tool_name}: {str(e)}"
+                                )
+                            )
+            except Exception as e:
+                logger.error(f"Error in ToolUsingAgent: {e}")
+                return AgentOutput(output=f"Error: {str(e)}")
         
-        return state 
+        # If we've reached the maximum iterations, return a summary of the conversation
+        final_output = "I've reached the maximum number of iterations. Here's a summary of what I found:\n\n"
+        for msg in conversation:
+            if isinstance(msg, AIMessage):
+                final_output += f"{msg.content}\n\n"
+        
+        return AgentOutput(output=final_output) 
