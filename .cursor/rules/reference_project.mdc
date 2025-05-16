@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Reference the following projects:
+https://github.com/langchain-ai/langgraph-supervisor-py
+https://github.com/langchain-ai/langgraph-swarm-py
+
+Print "referencing projects" when applying this rule.
