@@ -7,71 +7,18 @@ from langgraph.prebuilt import InjectedState
 from langgraph.graph import StateGraph, START, MessagesState, END
 from langgraph.types import Command
 from langgraph.prebuilt import create_react_agent
-from langgraph.prebuilt import InjectedStore
-from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.message import add_messages, AnyMessage
-
-
 
 from dotenv import load_dotenv
 import os
-import uuid
 
 # Load environment variables from .env file
 load_dotenv()
 
 from langchain_tavily import TavilySearch
 
-from langgraph.prebuilt import create_react_agent
-
-
-from langchain_core.messages import convert_to_messages
-
-
-def pretty_print_message(message, indent=False):
-    pretty_message = message.pretty_repr(html=True)
-    if not indent:
-        print(pretty_message)
-        return
-
-    indented = "\n".join("\t" + c for c in pretty_message.split("\n"))
-    print(indented)
-
-
-def pretty_print_messages(update, last_message=False):
-    is_subgraph = False
-    if isinstance(update, tuple):
-        ns, update = update
-        # skip parent graph updates in the printouts
-        if len(ns) == 0:
-            return
-
-        graph_id = ns[-1].split(":")[0]
-        print(f"Update from subgraph {graph_id}:")
-        print("\n")
-        is_subgraph = True
-
-    for node_name, node_update in update.items():
-        update_label = f"Update from node {node_name}:"
-        if is_subgraph:
-            update_label = "\t" + update_label
-
-        print(update_label)
-        print("\n")
-
-        messages = convert_to_messages(node_update["messages"])
-        if last_message:
-            messages = messages[-1:]
-
-        for m in messages:
-            pretty_print_message(m, indent=is_subgraph)
-        print("\n")
-
-
 web_search = TavilySearch(max_results=3)
-
 
 def create_handoff_tool(*, agent_name: str, description: str | None = None):
     name = f"transfer_to_{agent_name}"
@@ -95,51 +42,6 @@ def create_handoff_tool(*, agent_name: str, description: str | None = None):
         )
 
     return handoff_tool
-
-
-# Handoffs
-assign_to_research_agent = create_handoff_tool(
-    agent_name="research_agent",
-    description="Assign task to a researcher agent.",
-)
-
-assign_to_math_agent = create_handoff_tool(
-    agent_name="math_agent",
-    description="Assign task to a math agent.",
-)
-
-supervisor_agent = create_react_agent(
-    model="openai:gpt-4.1",
-    tools=[assign_to_research_agent, assign_to_math_agent],
-    prompt=(
-        "You are a supervisor managing two agents:\n"
-        "- a research agent. Assign research-related tasks to this agent\n"
-        "- a math agent. Assign math-related tasks to this agent\n"
-        "Assign work to one agent at a time, do not call agents in parallel.\n"
-        "Do not do any work yourself."
-    ),
-    name="supervisor",
-)
-
-from langgraph.graph import END
-
-research_agent = create_react_agent(
-    model="openai:gpt-3.5-turbo",
-    tools=[web_search],
-    prompt=(
-        "You are a research agent.\n\n"
-        "INSTRUCTIONS:\n"
-        "- Assist ONLY with research-related tasks, DO NOT do any math\n"
-        "- After you're done with your tasks, respond to the supervisor directly\n"
-        "- Respond ONLY with the results of your work, do NOT include ANY other text."
-    ),
-    name="research_agent",
-)
-# for chunk in research_agent.stream(
-#     {"messages": [{"role": "user", "content": "who is the mayor of NYC?"}]}
-# ):
-#     pretty_print_messages(chunk)
-
 
 graph_config = '''
 tools:
@@ -380,8 +282,6 @@ def create_graph(config: GraphConfig):
     # Compile and return the graph
     return graph.compile(store=InMemoryStore()) # TODO: Use proper store
 
-
-
 class GraphState(TypedDict):
     """State for the graph execution."""
     messages: Annotated[list[AnyMessage], add_messages]
@@ -392,29 +292,13 @@ def add(a: float, b: float):
     """Add two numbers."""
     return a + b
 
-
 def multiply(a: float, b: float):
     """Multiply two numbers."""
     return a * b
 
-
 def divide(a: float, b: float):
     """Divide two numbers."""
     return a / b
-
-
-math_agent = create_react_agent(
-    model="openai:gpt-4.1",
-    tools=[add, multiply, divide],
-    prompt=(
-        "You are a math agent.\n\n"
-        "INSTRUCTIONS:\n"
-        "- Assist ONLY with math-related tasks\n"
-        "- After you're done with your tasks, respond to the supervisor directly\n"
-        "- Respond ONLY with the results of your work, do NOT include ANY other text."
-    ),
-    name="math_agent",
-)
 
 # Global registry for nodes - using Any for the value type
 node_registry: Dict[str, Any] = {}
@@ -434,7 +318,7 @@ def create_planner_node(config_id: str, version_id: str) -> Any:
     return node
 
 # Function to get or create a node
-def get_or_create_node(config_id: str, version_id: str) -> str:
+def _get_or_create_node(config_id: str, version_id: str) -> str:
     """Get or create a node and return its registry ID."""
     node_id = f"{config_id}:{version_id}"
     if node_id not in node_registry:
@@ -448,7 +332,6 @@ def planner_node_handler(state: Annotated[MessagesState, InjectedState]):
         
     echo_response = {"role": "assistant", "content": f"<agent_config>{graph_config}</agent_config>"}
     return {"messages": messages + [echo_response]}
-
 
 class PsiState(TypedDict):
     messages: List[Any]  # Simple list of any message type
@@ -464,7 +347,7 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     if "planner_node_id" not in state or not state["planner_node_id"]:
         config_id = "default"
         version_id = "v1"
-        planner_node_id = get_or_create_node(config_id, version_id)
+        planner_node_id = _get_or_create_node(config_id, version_id)
         
         # Initialize the node registry dictionary if not present
         initialized_node_ids = state.get("initialized_node_ids", {})
@@ -537,11 +420,8 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     updated_state["messages"] = messages + [response]
     return updated_state
 
-
-store = InMemoryStore()
-
 # Redefining the supervisor graph with a clear structure
-supervisor = (
+psi = (
     StateGraph(PsiState)
     .add_node('task_handler', task_handler)
     .add_edge(START, "task_handler")
@@ -564,7 +444,7 @@ initial_state = {
 print("\nRunning the supervisor agent:")
 try:
     # Note: supervisor.invoke() returns the final state directly, not wrapped in node output
-    final_state = supervisor.invoke(initial_state)
+    final_state = psi.invoke(initial_state)
     
     print(f"Final state keys: {list(final_state.keys())}")
     
