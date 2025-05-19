@@ -139,37 +139,57 @@ research_agent = create_react_agent(
 
 
 graph_config = '''
+tools:
+  - name: web_search
+    script: web_search
+    description: Search the web for information.
+  - name: add
+    script: add
+    description: Add two numbers.
+  - name: multiply
+    script: multiply
+    description: Multiply two numbers.
+  - name: divide
+    script: divide
+    description: Divide two numbers.
 nodes:
     - name: supervisor
       type: react
+      is_entry_point: true
       config:
         model: openai:gpt-4.1
-        tools:
-          - name: assign_to_research_agent
-            description: Assign task to a research agent.
-          - name: assign_to_math_agent
-            description: Assign task to a math agent.
+        prompt: |
+            You are a supervisor managing two agents:
+            - a research agent. Assign research-related tasks to this agent
+            - a math agent. Assign math-related tasks to this agent
+            Assign work to one agent at a time, do not call agents in parallel.
+            Do not do any work yourself.
     - name: research_agent
       type: react
       config:
         model: openai:gpt-3.5-turbo
+        prompt: |
+            You are a research agent.
+            INSTRUCTIONS:
+            - Assist ONLY with research-related tasks, DO NOT do any math
+            - After you're done with your tasks, respond to the supervisor directly
+            - Respond ONLY with the results of your work, do NOT include ANY other text.
         tools:
-          - name: web_search
-            description: Search the web for information.
+          - web_search
     - name: math_agent
       type: react
       config:
         model: openai:gpt-4.1
+        prompt: |
+            You are a math agent.
+            INSTRUCTIONS:
+            - Assist ONLY with math-related tasks
+            - After you're done with your tasks, respond to the supervisor directly
+            - Respond ONLY with the results of your work, do NOT include ANY other text.
         tools:
-          - name: add
-            script: add
-            description: Add two numbers.
-          - name: multiply
-            script: multiply
-            description: Multiply two numbers.
-          - name: divide
-            script: divide
-            description: Divide two numbers.
+          - add
+          - multiply
+          - divide
 edges:
     - from: supervisor
       to: research_agent
@@ -192,10 +212,10 @@ class ScriptTool(BaseTool):
     script: str
 
 class Tool(BaseModel):
-    """Union type for different tool types."""
+    """Tool definition with script reference and description."""
     name: str
+    script: str
     description: str
-    script: Optional[str] = None
 
 # Node configuration models
 class NodeConfigBase(BaseModel):
@@ -205,8 +225,8 @@ class NodeConfigBase(BaseModel):
 class ReactNodeConfig(NodeConfigBase):
     """Configuration specific to 'react' type nodes."""
     model: str
-    tools: List[Tool]
-    prompt: Optional[str] = None
+    tools: Optional[List[str]] = None  # Tool names referenced from top-level tools
+    prompt: Optional[str] = None  # Can be multi-line string in YAML using | or > syntax
 
 class NodeConfig(BaseModel):
     """Configuration for a single node."""
@@ -217,6 +237,7 @@ class Node(BaseModel):
     """Complete node definition."""
     name: str
     type: str
+    is_entry_point: Optional[bool] = None
     config: Dict[str, Any]
 
 # Edge configuration model
@@ -228,6 +249,7 @@ class Edge(BaseModel):
 # Complete graph configuration model
 class GraphConfig(BaseModel):
     """Complete graph configuration."""
+    tools: Optional[List[Tool]] = None
     nodes: List[Node]
     edges: List[Edge]
     
@@ -240,7 +262,29 @@ def parse_graph_config(config_str: str) -> GraphConfig:
     """Parse graph configuration from YAML string."""
     import yaml
     config_dict = yaml.safe_load(config_str)
-    return GraphConfig(**config_dict)
+    
+    # Process the config to match our model expectations
+    processed_config = config_dict.copy()
+    
+    # Process nodes to ensure tool references are properly handled
+    if "nodes" in processed_config:
+        for node in processed_config["nodes"]:
+            if "config" in node and "tools" in node["config"]:
+                # Ensure tools is a list of strings (tool names)
+                if isinstance(node["config"]["tools"], list):
+                    # Convert any non-string entries to strings if needed
+                    node["config"]["tools"] = [
+                        tool if isinstance(tool, str) else tool["name"] 
+                        for tool in node["config"]["tools"]
+                    ]
+            
+            # Ensure prompt is properly handled, especially for multi-line strings
+            if "config" in node and "prompt" in node["config"]:
+                # YAML loader should already handle |, >, etc. notation properly,
+                # but we can add additional processing if needed
+                pass
+    
+    return GraphConfig(**processed_config)
 
 # Example usage:
 try:
@@ -248,6 +292,92 @@ try:
     print(f"Successfully parsed configuration with {len(parsed_config.nodes)} nodes and {len(parsed_config.edges)} edges")
 except Exception as e:
     print(f"Error parsing configuration: {e}")
+
+
+def create_graph(config: GraphConfig):
+    """Create a graph based on the configuration."""
+    # Create a mapping of tool names to actual tool objects
+    tool_map = {}
+    if config.tools:
+        for tool_config in config.tools:
+            if hasattr(tool_config, 'script') and tool_config.script:
+                # Get the tool object by evaluating the script name
+                try:
+                    tool_obj = eval(tool_config.script)
+                    tool_map[tool_config.name] = tool_obj
+                except (NameError, AttributeError) as e:
+                    print(f"Warning: Could not evaluate tool script '{tool_config.script}': {e}")
+    
+    # Create handoff tools for node transitions
+    handoff_tools = {}
+    for edge in config.edges:
+        tool_name = f"transfer_to_{edge.to}"
+        if tool_name not in handoff_tools:
+            handoff_tools[tool_name] = create_handoff_tool(
+                agent_name=edge.to, 
+                description=f"Transfer to {edge.to}"
+            )
+    
+    # Create nodes
+    nodes = {}
+    for node in config.nodes:
+        if node.type == "react":
+            # Collect tools for this node
+            node_tools = []
+            
+            # Add any tools specified in the node config
+            if "tools" in node.config and node.config["tools"]:
+                for tool_name in node.config["tools"]:
+                    if tool_name in tool_map:
+                        node_tools.append(tool_map[tool_name])
+                    else:
+                        print(f"Warning: Tool '{tool_name}' referenced in node '{node.name}' not found in tool map")
+            
+            # Add handoff tools for edges originating from this node
+            for edge in config.edges:
+                if edge.from_ == node.name and edge.to in handoff_tools:
+                    node_tools.append(handoff_tools[f"transfer_to_{edge.to}"])
+            
+            # Get prompt from config or use default
+            prompt = node.config.get("prompt", f"You are the {node.name} agent.")
+            
+            # Create the react agent
+            nodes[node.name] = create_react_agent(
+                model=node.config["model"],
+                tools=node_tools,
+                prompt=prompt,
+                name=node.name
+            )
+    
+    # Create the graph structure
+    graph = StateGraph(GraphState)
+    
+    # Add all nodes to the graph
+    for node_name, node_handler in nodes.items():
+        graph.add_node(node_name, node_handler)
+    
+    # Connect the entry point node to START and END
+    try:
+        entry_node = next(node for node in config.nodes if node.is_entry_point)
+        graph.add_edge(START, entry_node.name)
+        # Entry point is also connected to END
+        graph.add_edge(entry_node.name, END)
+    except StopIteration:
+        print("Warning: No entry point node specified in configuration")
+    except Exception as e:
+        print(f"Error adding entry point edges: {e}")
+    
+    # Add all other edges defined in the configuration
+    for edge in config.edges:
+        try:
+            graph.add_edge(edge.from_, edge.to)
+        except Exception as e:
+            print(f"Error adding edge from '{edge.from_}' to '{edge.to}': {e}")
+    
+    # Compile and return the graph
+    return graph.compile(store=InMemoryStore()) # TODO: Use proper store
+
+
 
 class GraphState(TypedDict):
     """State for the graph execution."""
