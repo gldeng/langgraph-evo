@@ -1,3 +1,4 @@
+import re
 from typing import Annotated, Any, Dict, List, Tuple
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
@@ -10,6 +11,8 @@ from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.message import add_messages, AnyMessage
+
 
 
 from dotenv import load_dotenv
@@ -335,7 +338,7 @@ def create_graph(config: GraphConfig):
             
             # Add handoff tools for edges originating from this node
             for edge in config.edges:
-                if edge.from_ == node.name and edge.to in handoff_tools:
+                if edge.from_ == node.name and f"transfer_to_{edge.to}" in handoff_tools:
                     node_tools.append(handoff_tools[f"transfer_to_{edge.to}"])
             
             # Get prompt from config or use default
@@ -381,7 +384,7 @@ def create_graph(config: GraphConfig):
 
 class GraphState(TypedDict):
     """State for the graph execution."""
-    messages: List[Any]
+    messages: Annotated[list[AnyMessage], add_messages]
     config: GraphConfig
     initialized_node_ids: Dict[str, str]  # Maps node names to registry IDs
 
@@ -442,16 +445,10 @@ def get_or_create_node(config_id: str, version_id: str) -> str:
 def planner_node_handler(state: Annotated[MessagesState, InjectedState]):
     """A simple handler that just echoes the last message."""
     messages = state["messages"]
-    last_message = messages[-1]
-    
-    # Handle both dictionary and Message object types
-    if hasattr(last_message, "content"):
-        content = last_message.content
-    else:
-        content = last_message["content"]
         
-    echo_response = {"role": "assistant", "content": f"Echo: {content}"}
+    echo_response = {"role": "assistant", "content": f"<agent_config>{graph_config}</agent_config>"}
     return {"messages": messages + [echo_response]}
+
 
 class PsiState(TypedDict):
     messages: List[Any]  # Simple list of any message type
@@ -496,28 +493,60 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     
     # Handle both dictionary and Message object types for the response
     if hasattr(planner_response, "content"):
-        content = planner_response.content
+        # Use regex to extract the config from the response
+        match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response.content, re.DOTALL)
+        if match:
+            config = match.group(1)
+        else:
+            print(f"Warning: Could not find agent_config in response: {planner_response.content[:100]}...")
+            # Use default config or the graph_config variable as a fallback
+            config = graph_config
     else:
-        content = planner_response["content"]
+        match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response["content"], re.DOTALL)
+        if match:
+            config = match.group(1)
+        else:
+            print(f"Warning: Could not find agent_config in response: {planner_response['content'][:100]}...")
+            # Use default config or the graph_config variable as a fallback
+            config = graph_config
+
+    # Add a response to the message history
+    response = {"role": "assistant", "content": "I'm analyzing your request..."}
     
-    # Create our final response
-    result = f"Processed by planner: {content}"
-    response = {"role": "assistant", "content": result}
+    try:
+        parsed_config = parse_graph_config(config)
+        print("Successfully parsed the agent configuration")
+
+        # Create the graph
+        graph = create_graph(parsed_config)
+        result = graph.invoke({"messages": [last_message]})
+        response = {
+            "role": "assistant",
+            "content": result["messages"][-1].content
+        }
+
+        print("Result:", response)
+    except Exception as e:
+        print(f"Error parsing configuration: {e}")
+        response = {
+            "role": "assistant",
+            "content": "I processed your request but encountered issues with my agent configuration system."
+        }
     
-    # Return updated state
+    # Return updated state with our response
     updated_state["messages"] = messages + [response]
     return updated_state
 
 
 store = InMemoryStore()
 
-# Define the multi-agent supervisor graph
+# Redefining the supervisor graph with a clear structure
 supervisor = (
-    StateGraph(PsiState)  # Using PsiState instead of MessagesState
+    StateGraph(PsiState)
     .add_node('task_handler', task_handler)
     .add_edge(START, "task_handler")
     .add_edge("task_handler", END)
-    .compile(store=store)
+    .compile(store=InMemoryStore())
 )
 
 # Initial state with empty initialized_node_ids dictionary
@@ -531,31 +560,39 @@ initial_state = {
     "initialized_node_ids": {}
 }
 
-# Stream the results
-for chunk in supervisor.stream(initial_state):
-    pretty_print_messages(chunk, last_message=True)
-
-# Access the final message history from task_handler node
-final_state = chunk["task_handler"]
-
-# Print final messages in a readable format
-print("\nFinal Message History:")
-for message in final_state["messages"]:
-    if isinstance(message, dict):
-        print(f"Role: {message.get('role', 'unknown')}")
-        print(f"Content: {message.get('content', '')}")
+# Run the supervisor directly instead of streaming
+print("\nRunning the supervisor agent:")
+try:
+    # Note: supervisor.invoke() returns the final state directly, not wrapped in node output
+    final_state = supervisor.invoke(initial_state)
+    
+    print(f"Final state keys: {list(final_state.keys())}")
+    
+    # Print final messages in a readable format
+    if "messages" in final_state:
+        print("\nFinal Message History:")
+        for message in final_state["messages"]:
+            if isinstance(message, dict):
+                print(f"Role: {message.get('role', 'unknown')}")
+                print(f"Content: {message.get('content', '')}")
+            else:
+                # Try pretty_print if available, otherwise fall back to str representation
+                try:
+                    message.pretty_print()
+                except AttributeError:
+                    print(str(message))
+            print("-" * 40)
     else:
-        # Try pretty_print if available, otherwise fall back to str representation
-        try:
-            message.pretty_print()
-        except AttributeError:
-            print(str(message))
-    print("-" * 40)
+        print("No messages found in the final state")
+    
+    # Print planner node info
+    print("\nState Management Information:")
+    print(f"Planner Node ID: {final_state.get('planner_node_id', 'None')}")
+    print(f"Initialized Node IDs: {final_state.get('initialized_node_ids', {})}")
+except Exception as e:
+    print(f"Error running the supervisor: {e}")
 
-# Print the planner node ID and initialized nodes for verification
-print("\nState Management Information:")
-print(f"Planner Node ID: {final_state.get('planner_node_id', 'None')}")
-print(f"Initialized Node IDs: {final_state.get('initialized_node_ids', {})}")
+# Print the registry size for verification
 print(f"Node Registry Size: {len(node_registry)} node(s)")
 for node_id in node_registry:
     print(f"  - {node_id}")
