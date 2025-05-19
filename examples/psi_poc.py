@@ -1,12 +1,19 @@
-from typing import Annotated
+from typing import Annotated, Any, Dict, List, Tuple
+from typing_extensions import TypedDict
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.prebuilt import InjectedState
-from langgraph.graph import StateGraph, START, MessagesState
+from langgraph.graph import StateGraph, START, MessagesState, END
 from langgraph.types import Command
 from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import InjectedStore
+from langgraph.store.base import BaseStore
+from langgraph.store.memory import InMemoryStore
+from langgraph.checkpoint.memory import InMemorySaver
+
 
 from dotenv import load_dotenv
 import os
+import uuid
 
 # Load environment variables from .env file
 load_dotenv()
@@ -157,33 +164,149 @@ math_agent = create_react_agent(
     name="math_agent",
 )
 
+# Global registry for nodes - using Any for the value type
+node_registry: Dict[str, Any] = {}
+
+# Function to create a planner node
+def create_planner_node(config_id: str, version_id: str) -> Any:
+    """Create a new planner node with the specified configuration."""
+    # Here you would use config_id and version_id to determine how to configure the node
+    # For simplicity, we're creating a basic node that just echoes messages
+    node = (
+        StateGraph(MessagesState)
+        .add_node('echo', planner_node_handler)
+        .add_edge(START, "echo")
+        .add_edge("echo", END)
+        .compile(store=InMemoryStore())
+    )
+    return node
+
+# Function to get or create a node
+def get_or_create_node(config_id: str, version_id: str) -> str:
+    """Get or create a node and return its registry ID."""
+    node_id = f"{config_id}:{version_id}"
+    if node_id not in node_registry:
+        node_registry[node_id] = create_planner_node(config_id, version_id)
+    return node_id
+
+# Handler for the planner node
+def planner_node_handler(state: Annotated[MessagesState, InjectedState]):
+    """A simple handler that just echoes the last message."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # Handle both dictionary and Message object types
+    if hasattr(last_message, "content"):
+        content = last_message.content
+    else:
+        content = last_message["content"]
+        
+    echo_response = {"role": "assistant", "content": f"Echo: {content}"}
+    return {"messages": messages + [echo_response]}
+
+class PsiState(TypedDict):
+    messages: List[Any]  # Simple list of any message type
+    planner_node_id: str  # Store ID instead of actual graph object
+    initialized_node_ids: Dict[Tuple[str, str], str]  # Store IDs, not objects
+
+def task_handler(state: Annotated[PsiState, InjectedState]):
+    """A simple agent that processes messages using a planner node from the registry."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # Get or create planner node if not already in state
+    if "planner_node_id" not in state or not state["planner_node_id"]:
+        config_id = "default"
+        version_id = "v1"
+        planner_node_id = get_or_create_node(config_id, version_id)
+        
+        # Initialize the node registry dictionary if not present
+        initialized_node_ids = state.get("initialized_node_ids", {})
+        initialized_node_ids[(config_id, version_id)] = planner_node_id
+        
+        updated_state = {
+            "messages": messages,
+            "planner_node_id": planner_node_id,
+            "initialized_node_ids": initialized_node_ids
+        }
+    else:
+        updated_state = state
+    
+    # Get the planner node from registry
+    planner_node_id = updated_state["planner_node_id"]
+    planner = node_registry[planner_node_id]
+    
+    # Process the message with the planner
+    planner_result = planner.invoke({"messages": [last_message]})
+    
+    # From debug output, we see the structure is {'messages': [...]}
+    print("DEBUG - Planner Result Structure:", planner_result)
+    
+    # Get the last message from the result
+    planner_response = planner_result["messages"][-1]
+    
+    # Handle both dictionary and Message object types for the response
+    if hasattr(planner_response, "content"):
+        content = planner_response.content
+    else:
+        content = planner_response["content"]
+    
+    # Create our final response
+    result = f"Processed by planner: {content}"
+    response = {"role": "assistant", "content": result}
+    
+    # Return updated state
+    updated_state["messages"] = messages + [response]
+    return updated_state
+
+
+store = InMemoryStore()
+
 # Define the multi-agent supervisor graph
 supervisor = (
-    StateGraph(MessagesState)
-    # NOTE: `destinations` is only needed for visualization and doesn't affect runtime behavior
-    .add_node(supervisor_agent, destinations=("research_agent", "math_agent", END))
-    .add_node(research_agent)
-    .add_node(math_agent)
-    .add_edge(START, "supervisor")
-    # always return back to the supervisor
-    .add_edge("research_agent", "supervisor")
-    .add_edge("math_agent", "supervisor")
-    .compile()
+    StateGraph(PsiState)  # Using PsiState instead of MessagesState
+    .add_node('task_handler', task_handler)
+    .add_edge(START, "task_handler")
+    .add_edge("task_handler", END)
+    .compile(store=store)
 )
 
-for chunk in supervisor.stream(
-    {
-        "messages": [
-            {
-                "role": "user",
-                "content": "find US and New York state GDP in 2024. what % of US GDP was New York state?",
-            }
-        ]
-    },
-):
+# Initial state with empty initialized_node_ids dictionary
+initial_state = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "find US and New York state GDP in 2024. what % of US GDP was New York state?",
+        }
+    ],
+    "initialized_node_ids": {}
+}
+
+# Stream the results
+for chunk in supervisor.stream(initial_state):
     pretty_print_messages(chunk, last_message=True)
 
-final_message_history = chunk["supervisor"]["messages"]
+# Access the final message history from task_handler node
+final_state = chunk["task_handler"]
 
-for message in final_message_history:
-    message.pretty_print()
+# Print final messages in a readable format
+print("\nFinal Message History:")
+for message in final_state["messages"]:
+    if isinstance(message, dict):
+        print(f"Role: {message.get('role', 'unknown')}")
+        print(f"Content: {message.get('content', '')}")
+    else:
+        # Try pretty_print if available, otherwise fall back to str representation
+        try:
+            message.pretty_print()
+        except AttributeError:
+            print(str(message))
+    print("-" * 40)
+
+# Print the planner node ID and initialized nodes for verification
+print("\nState Management Information:")
+print(f"Planner Node ID: {final_state.get('planner_node_id', 'None')}")
+print(f"Initialized Node IDs: {final_state.get('initialized_node_ids', {})}")
+print(f"Node Registry Size: {len(node_registry)} node(s)")
+for node_id in node_registry:
+    print(f"  - {node_id}")
