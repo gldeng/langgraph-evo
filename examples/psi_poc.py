@@ -1,4 +1,5 @@
 from typing import Annotated, Any, Dict, List, Tuple
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.prebuilt import InjectedState
@@ -135,6 +136,124 @@ research_agent = create_react_agent(
 #     {"messages": [{"role": "user", "content": "who is the mayor of NYC?"}]}
 # ):
 #     pretty_print_messages(chunk)
+
+
+graph_config = '''
+nodes:
+    - name: supervisor
+      type: react
+      config:
+        model: openai:gpt-4.1
+        tools:
+          - name: assign_to_research_agent
+            description: Assign task to a research agent.
+          - name: assign_to_math_agent
+            description: Assign task to a math agent.
+    - name: research_agent
+      type: react
+      config:
+        model: openai:gpt-3.5-turbo
+        tools:
+          - name: web_search
+            description: Search the web for information.
+    - name: math_agent
+      type: react
+      config:
+        model: openai:gpt-4.1
+        tools:
+          - name: add
+            script: add
+            description: Add two numbers.
+          - name: multiply
+            script: multiply
+            description: Multiply two numbers.
+          - name: divide
+            script: divide
+            description: Divide two numbers.
+edges:
+    - from: supervisor
+      to: research_agent
+    - from: supervisor
+      to: math_agent
+'''
+
+# Data models to represent the configuration
+from pydantic import BaseModel, Field
+from typing import Literal, Optional, Union
+
+# Tool configuration models
+class BaseTool(BaseModel):
+    """Base model for all tools."""
+    name: str
+    description: str
+
+class ScriptTool(BaseTool):
+    """Tool that references a Python function by name."""
+    script: str
+
+class Tool(BaseModel):
+    """Union type for different tool types."""
+    name: str
+    description: str
+    script: Optional[str] = None
+
+# Node configuration models
+class NodeConfigBase(BaseModel):
+    """Base configuration for all node types."""
+    pass
+
+class ReactNodeConfig(NodeConfigBase):
+    """Configuration specific to 'react' type nodes."""
+    model: str
+    tools: List[Tool]
+    prompt: Optional[str] = None
+
+class NodeConfig(BaseModel):
+    """Configuration for a single node."""
+    type: Literal["react", "custom", "task_handler"]
+    config: Union[ReactNodeConfig, Dict[str, Any]]
+
+class Node(BaseModel):
+    """Complete node definition."""
+    name: str
+    type: str
+    config: Dict[str, Any]
+
+# Edge configuration model
+class Edge(BaseModel):
+    """Connection between nodes."""
+    from_: str = Field(..., alias="from")
+    to: str
+
+# Complete graph configuration model
+class GraphConfig(BaseModel):
+    """Complete graph configuration."""
+    nodes: List[Node]
+    edges: List[Edge]
+    
+    class Config:
+        """Pydantic configuration."""
+        populate_by_name = True  # Allow populating from_/from aliases
+
+# Helper function to parse the configuration
+def parse_graph_config(config_str: str) -> GraphConfig:
+    """Parse graph configuration from YAML string."""
+    import yaml
+    config_dict = yaml.safe_load(config_str)
+    return GraphConfig(**config_dict)
+
+# Example usage:
+try:
+    parsed_config = parse_graph_config(graph_config)
+    print(f"Successfully parsed configuration with {len(parsed_config.nodes)} nodes and {len(parsed_config.edges)} edges")
+except Exception as e:
+    print(f"Error parsing configuration: {e}")
+
+class GraphState(TypedDict):
+    """State for the graph execution."""
+    messages: List[Any]
+    config: GraphConfig
+    initialized_node_ids: Dict[str, str]  # Maps node names to registry IDs
 
 def add(a: float, b: float):
     """Add two numbers."""
