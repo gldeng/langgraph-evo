@@ -1,15 +1,15 @@
 import re
-from typing import Annotated, Any, Dict, List, Tuple
+from typing import Annotated, Any, Dict, List, Tuple, cast
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 from langchain_core.tools import tool, InjectedToolCallId
-from langgraph.prebuilt import InjectedState
+from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.graph import StateGraph, START, MessagesState, END
 from langgraph.types import Command
 from langgraph.prebuilt import create_react_agent
 from langgraph.store.memory import InMemoryStore
+from langgraph.store.base import BaseStore
 from langgraph.graph.message import add_messages, AnyMessage
-
 from dotenv import load_dotenv
 import os
 
@@ -304,33 +304,43 @@ def divide(a: float, b: float):
 node_registry: Dict[str, Any] = {}
 
 # Function to create a planner node
-def create_planner_node(config_id: str, version_id: str) -> Any:
+def create_planner_node(config_id: str, version_id: str, store: BaseStore) -> Any:
     """Create a new planner node with the specified configuration."""
-    # Here you would use config_id and version_id to determine how to configure the node
-    # For simplicity, we're creating a basic node that just echoes messages
+    # Create the node using the injected store
     node = (
         StateGraph(MessagesState)
-        .add_node('echo', planner_node_handler)
+        .add_node('echo', planner_node_handler_wrapped)
         .add_edge(START, "echo")
         .add_edge("echo", END)
-        .compile(store=InMemoryStore())
+        .compile(store=store)
     )
     return node
 
 # Function to get or create a node
-def _get_or_create_node(config_id: str, version_id: str) -> str:
+def _get_or_create_node(config_id: str, version_id: str, store: BaseStore) -> str:
     """Get or create a node and return its registry ID."""
     node_id = f"{config_id}:{version_id}"
     if node_id not in node_registry:
-        node_registry[node_id] = create_planner_node(config_id, version_id)
+        node_registry[node_id] = create_planner_node(config_id, version_id, store)
     return node_id
 
 # Handler for the planner node
-def planner_node_handler(state: Annotated[MessagesState, InjectedState]):
+def planner_node_handler(
+    state: Annotated[MessagesState, InjectedState],
+    store: Annotated[BaseStore, InjectedStore]
+):
     """A simple handler that just echoes the last message."""
     messages = state["messages"]
+    
+    # Get the config from the store
+    config_key = "default:v1"
+    config_str = store.get(config_key, "config")
+    
+    # Make sure the config is a proper string, not an Item object
+    if not isinstance(config_str, str):
+        config_str = graph_config
         
-    echo_response = {"role": "assistant", "content": f"<agent_config>{graph_config}</agent_config>"}
+    echo_response = {"role": "assistant", "content": f"<agent_config>{config_str}</agent_config>"}
     return {"messages": messages + [echo_response]}
 
 class PsiState(TypedDict):
@@ -338,7 +348,10 @@ class PsiState(TypedDict):
     planner_node_id: str  # Store ID instead of actual graph object
     initialized_node_ids: Dict[Tuple[str, str], str]  # Store IDs, not objects
 
-def task_handler(state: Annotated[PsiState, InjectedState]):
+def task_handler(
+    state: Annotated[PsiState, InjectedState],
+    store: Annotated[BaseStore, InjectedStore]
+):
     """A simple agent that processes messages using a planner node from the registry."""
     messages = state["messages"]
     last_message = messages[-1]
@@ -347,9 +360,10 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     if "planner_node_id" not in state or not state["planner_node_id"]:
         config_id = "default"
         version_id = "v1"
-        planner_node_id = _get_or_create_node(config_id, version_id)
         
         # Initialize the node registry dictionary if not present
+        planner_node_id = _get_or_create_node(config_id, version_id, store)
+        
         initialized_node_ids = state.get("initialized_node_ids", {})
         initialized_node_ids[(config_id, version_id)] = planner_node_id
         
@@ -374,24 +388,34 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     # Get the last message from the result
     planner_response = planner_result["messages"][-1]
     
-    # Handle both dictionary and Message object types for the response
+    # Inside task_handler, handle both dictionary and Message object types for the response
     if hasattr(planner_response, "content"):
         # Use regex to extract the config from the response
         match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response.content, re.DOTALL)
         if match:
             config = match.group(1)
+            # Config storage will be handled by separate functions
         else:
             print(f"Warning: Could not find agent_config in response: {planner_response.content[:100]}...")
-            # Use default config or the graph_config variable as a fallback
-            config = graph_config
+            # Get the config from the store or use default
+            config_key = "default:v1"
+            config = store.get(config_key, "config")
+            # Make sure the config is a proper string
+            if not isinstance(config, str):
+                config = graph_config
     else:
         match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response["content"], re.DOTALL)
         if match:
             config = match.group(1)
+            # Config storage will be handled by separate functions
         else:
             print(f"Warning: Could not find agent_config in response: {planner_response['content'][:100]}...")
-            # Use default config or the graph_config variable as a fallback
-            config = graph_config
+            # Get the config from the store or use default
+            config_key = "default:v1"
+            config = store.get(config_key, "config")
+            # Make sure the config is a proper string
+            if not isinstance(config, str):
+                config = graph_config
 
     # Add a response to the message history
     response = {"role": "assistant", "content": "I'm analyzing your request..."}
@@ -420,14 +444,59 @@ def task_handler(state: Annotated[PsiState, InjectedState]):
     updated_state["messages"] = messages + [response]
     return updated_state
 
-# Redefining the supervisor graph with a clear structure
+# Add code to initialize the graph configs in the store when the script runs
+def initialize_configs(store: BaseStore):
+    """Initialize the default configurations in the store."""
+    # Store the default graph configuration
+    store.put("default:v1", "config", graph_config)
+    
+# Create the compiled psi graph with persistent store
+from langgraph.prebuilt import ToolNode  # Use prebuilt module for imports
+
+# Create a store instance to be shared across components
+store = InMemoryStore()
+
+def task_handler_wrapped(state, store):
+    """Simple wrapper for task_handler that passes the injected store."""
+    return task_handler(state, store)
+
+def planner_node_handler_wrapped(state, store):
+    """Simple wrapper for planner_node_handler that passes the injected store."""
+    return planner_node_handler(state, store)
+
+# Create the graph with explicit state type and handler
 psi = (
     StateGraph(PsiState)
-    .add_node('task_handler', task_handler)
+    .add_node('task_handler', task_handler_wrapped)
     .add_edge(START, "task_handler")
     .add_edge("task_handler", END)
-    .compile(store=InMemoryStore())
+    .compile(store=store)
 )
+
+# Initialize configurations
+initialize_configs(store)
+
+# Log store status
+print("\nStore initialization status:")
+try:
+    config = store.get("default:v1", "config")
+    print(f"Config found in store: {'Yes' if config else 'No'}")
+    print(f"Config type: {type(config)}")
+    if config and not isinstance(config, str):
+        print(f"Config representation: {repr(config)}")
+except Exception as e:
+    print(f"Error accessing store: {e}")
+    
+# Print store keys if we can access them
+try:
+    if hasattr(store, "get_all"):
+        keys = store.get_all()
+        print(f"Store keys: {keys}")
+    elif hasattr(store, "list_keys"):
+        keys = store.list_keys()
+        print(f"Store keys: {keys}")
+except Exception as e:
+    print(f"Could not list store keys: {e}")
 
 # Initial state with empty initialized_node_ids dictionary
 initial_state = {
