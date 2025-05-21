@@ -2,9 +2,6 @@
 from typing import Dict, Any
 from dotenv import load_dotenv
 from langgraph.store.memory import InMemoryStore
-from langgraph.graph import StateGraph, START, END
-import os
-
 # Load environment variables from .env file
 load_dotenv()
 
@@ -13,10 +10,8 @@ from langchain_tavily import TavilySearch
 
 # Import from the langgraph_evo package
 from langgraph_evo.core.store import initialize_configs
-from langgraph_evo.core.state import PsiState
-from langgraph_evo.components.handlers import task_handler_wrapped
-from langgraph_evo.components.tools import add, multiply, divide
 from langgraph_evo.core.tool_registry import register_tool, register_standard_tools
+from langgraph_evo import create_psi_graph
 
 # Register the tools in the registry
 web_search = TavilySearch(max_results=3)
@@ -89,13 +84,7 @@ edges:
 store = InMemoryStore()
 
 # Create the PSI graph with main task handler
-psi = (
-    StateGraph(PsiState)
-    .add_node('task_handler', task_handler_wrapped)
-    .add_edge(START, "task_handler")
-    .add_edge("task_handler", END)
-    .compile(store=store)
-)
+psi = create_psi_graph(store)
 
 # Initialize configurations in the store
 initialize_configs(store, graph_config)

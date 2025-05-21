@@ -20,7 +20,7 @@ from .core.tool_registry import (
 from .components.planner import create_react_planner, create_planner_node, get_configs
 from .components.tools import create_handoff_tool, add, multiply, divide
 from .components.handlers import task_handler, planner_node_handler
-
+from .psi import create_psi_graph
 __version__ = "0.1.0"
 __all__ = [
     # Core
@@ -56,4 +56,5 @@ __all__ = [
     "divide",
     "task_handler",
     "planner_node_handler",
+    "create_psi_graph",
 ]
