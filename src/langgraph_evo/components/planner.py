@@ -23,7 +23,7 @@ def get_configs(
         return list(map(lambda c: c.value, configs))
     return []
 
-def create_react_planner():
+def create_react_planner(model: str = "openai:gpt-4"):
     """Create a React agent that functions as a planner."""
     system_prompt = """You are an AI agent configurator that helps set up and run AI agent systems.
     
@@ -49,7 +49,7 @@ def create_react_planner():
     
     # Create the React agent
     return create_react_agent(
-        model="openai:gpt-4",
+        model=model,
         tools=[get_configs],
         prompt=system_prompt
     )

@@ -7,6 +7,7 @@ import builtins
 from langgraph.graph import StateGraph, START, END
 from langgraph.store.memory import InMemoryStore
 
+from langgraph_evo.components.tools import name_of_transfer_tool
 from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.config import GraphConfig
 from langgraph_evo.core.tool_registry import get_tool, has_tool, resolve_tool
@@ -54,7 +55,7 @@ def create_graph(config: GraphConfig):
     # Create handoff tools for node transitions
     handoff_tools = {}
     for edge in config.edges:
-        tool_name = f"transfer_to_{edge.to}"
+        tool_name = name_of_transfer_tool(edge.to)
         if tool_name not in handoff_tools:
             handoff_tools[tool_name] = create_handoff_tool(
                 agent_name=edge.to, 
@@ -78,8 +79,8 @@ def create_graph(config: GraphConfig):
             
             # Add handoff tools for edges originating from this node
             for edge in config.edges:
-                if edge.from_ == node.name and f"transfer_to_{edge.to}" in handoff_tools:
-                    node_tools.append(handoff_tools[f"transfer_to_{edge.to}"])
+                if edge.from_ == node.name and name_of_transfer_tool(edge.to) in handoff_tools:
+                    node_tools.append(handoff_tools[name_of_transfer_tool(edge.to)])
             
             # Get prompt from config or use default
             prompt = node.config.get("prompt", f"You are the {node.name} agent.")

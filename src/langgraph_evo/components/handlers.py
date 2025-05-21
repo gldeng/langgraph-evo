@@ -5,7 +5,7 @@ from typing import Annotated, Any, Dict, List
 
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.store.base import BaseStore
-
+from langchain_core.messages import AIMessage
 from langgraph_evo.core.state import PsiState
 from langgraph_evo.core.registry import _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from langgraph_evo.core.config import parse_graph_config
@@ -31,9 +31,9 @@ def planner_node_handler(
     response = None
     if configs:
         config_str = configs[0].value.config
-        response = {"role": "assistant", "content": f"<agent_config>{config_str}</agent_config>"}
+        response = AIMessage(content=f"<agent_config>{config_str}</agent_config>")
     else:
-        response = {"role": "assistant", "content": f"No configuration found."}
+        response = AIMessage(content="No configuration found.")
     return {"messages": messages + [response]}
 
 def task_handler(
