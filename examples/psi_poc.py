@@ -313,15 +313,64 @@ node_registry: Dict[str, Any] = {}
 PLANNER_NODE_ID = "__planner_node__"
 AGENT_CONFIGS_NAMESPACE = ("agent", "configs")
 
-# Function to create a planner node
+# Replace the planner_node_handler with a React agent approach
+
+@tool
+def get_configs(
+    store: Annotated[BaseStore, InjectedStore]
+) -> List[ConfigRecord]:
+    """Retrieve the agent configuration.
+    
+    This tool retrieves all agent configurations from the store.
+    Output is a list of ConfigRecord objects.
+    """
+    configs = store.search(AGENT_CONFIGS_NAMESPACE)
+    if configs:
+        return list(map(lambda c: c.value, configs))
+    return []
+
+def create_react_planner():
+    """Create a React agent that functions as a planner."""
+    system_prompt = """You are an AI agent configurator that helps set up and run AI agent systems.
+    
+    When a user asks a question:
+    1. Retrieve all the agent configurations using the get_configs tool
+    2. For each configuration, analyze whether this configuration can solve the user's query
+    3. If it can, return the configuration string
+
+    Output format:
+    - If it can, return the configuration string in a <agent_config> tag
+    - If it cannot, return "No configuration found"
+
+    Example output:
+    <agent_config>
+    Config string here
+    </agent_config>
+
+    Only do the following but not more than that:
+    - Retrieve the agent configurations
+    - Analyze whether each configuration can solve the user's query
+    - Return the configuration string if it can, otherwise return "No configuration found"
+    """
+    
+    # Create the React agent
+    return create_react_agent(
+        model="openai:gpt-4",
+        tools=[get_configs],
+        prompt=system_prompt
+    )
+
+# Function to create a planner node with React agent
 def create_planner_node(store: BaseStore) -> Any:
-    """Create a new planner node with the store dependency."""
-    # Create the node using the injected store
+    """Create a new planner node with the React agent."""
+    react_agent = create_react_planner()
+    
+    # Create the node using the injected store and React agent
     node = (
         StateGraph(MessagesState)
-        .add_node('echo', planner_node_handler_wrapped)
-        .add_edge(START, "echo")
-        .add_edge("echo", END)
+        .add_node('react_planner', react_agent)
+        .add_edge(START, "react_planner")
+        .add_edge("react_planner", END)
         .compile(store=store)
     )
     return node
@@ -361,9 +410,8 @@ def task_handler(
     state: Annotated[PsiState, InjectedState],
     store: Annotated[BaseStore, InjectedStore]
 ):
-    """A simple agent that processes messages using a planner node from the registry."""
+    """A simple agent that processes messages using a React planner from the registry."""
     messages = state["messages"]
-    last_message = messages[-1]
     
     # Get or create planner node if not already in state
     if "planner_node_id" not in state or not state["planner_node_id"]:
@@ -385,17 +433,32 @@ def task_handler(
     planner_node_id = updated_state["planner_node_id"]
     planner = node_registry[planner_node_id]
     
-    # Process the message with the planner
-    planner_result = planner.invoke({"messages": [last_message]})
-    
-    # From debug output, we see the structure is {'messages': [...]}
-    print("DEBUG - Planner Result Structure:", planner_result)
-    
-    # Get the last message from the result
-    planner_response = planner_result["messages"][-1]
-    
-    # Inside task_handler, handle both dictionary and Message object types for the response
     try:
+        # Find the last user message and ensure it's in the right format
+        last_user_message = None
+        for msg in reversed(messages):
+            # Handle both dict and Message object types
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                last_user_message = msg
+                break
+            elif hasattr(msg, "type") and msg.type == "human":
+                # Convert to dict format if it's a Message object
+                last_user_message = {"role": "user", "content": msg.content}
+                break
+        
+        if not last_user_message:
+            # If no user message found, use the last message regardless of type
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                last_user_message = last_msg
+            else:
+                last_user_message = {"role": "user", "content": last_msg.content}
+        
+        # Process with the planner
+        planner_result = planner.invoke({"messages": [last_user_message]})
+
+        planner_response = planner_result["messages"][-1]
+
         content = planner_response.content if hasattr(planner_response, "content") else planner_response["content"]
     except (AttributeError, TypeError, KeyError) as e:
         print(f"Warning: Could not extract content from planner response: {e}")
@@ -421,7 +484,7 @@ def task_handler(
 
         # Create the graph
         graph = create_graph(parsed_config)
-        result = graph.invoke({"messages": [last_message]})
+        result = graph.invoke({"messages": [last_user_message]})
         response = {
             "role": "assistant",
             "content": result["messages"][-1].content
