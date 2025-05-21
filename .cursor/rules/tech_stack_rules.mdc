@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+Use context7 to find the library documentation for:
+https://github.com/langchain-ai/langchain
+https://github.com/langchain-ai/langgraph
