@@ -43,6 +43,14 @@ def create_handoff_tool(*, agent_name: str, description: str | None = None):
 
     return handoff_tool
 
+
+class ConfigRecord(BaseModel):
+    name: str
+    version: str
+    description: str
+    config: str
+
+
 graph_config = '''
 tools:
   - name: web_search
@@ -303,6 +311,7 @@ def divide(a: float, b: float):
 # Global registry for nodes - using Any for the value type
 node_registry: Dict[str, Any] = {}
 PLANNER_NODE_ID = "__planner_node__"
+AGENT_CONFIGS_NAMESPACE = ("agent", "configs")
 
 # Function to create a planner node
 def create_planner_node(store: BaseStore) -> Any:
@@ -334,15 +343,14 @@ def planner_node_handler(
     messages = state["messages"]
     
     # Get the config from the store
-    config_key = "default:v1"
-    config_str = store.get(config_key, "config")
-    
-    # Make sure the config is a proper string, not an Item object
-    if not isinstance(config_str, str):
-        config_str = graph_config
-        
-    echo_response = {"role": "assistant", "content": f"<agent_config>{config_str}</agent_config>"}
-    return {"messages": messages + [echo_response]}
+    configs = store.search(AGENT_CONFIGS_NAMESPACE)
+    response = None
+    if configs:
+        config_str = configs[0].value.config
+        response = {"role": "assistant", "content": f"<agent_config>{config_str}</agent_config>"}
+    else:
+        response = {"role": "assistant", "content": f"No configuration found."}
+    return {"messages": messages + [response]}
 
 class PsiState(TypedDict):
     messages: List[Any]  # Simple list of any message type
@@ -435,8 +443,20 @@ def task_handler(
 def initialize_configs(store: BaseStore):
     """Initialize the default configurations in the store."""
     # Store the default graph configuration
-    store.put("default:v1", "config", graph_config)
+    config_record = ConfigRecord(
+        name="default", 
+        version="v1", 
+        description="Default configuration", 
+        config=graph_config
+    )
     
+    # Correct way to call store.put with three arguments
+    store.put(
+        AGENT_CONFIGS_NAMESPACE,  # namespace
+        "default:v1",                         # key
+        config_record                     # value
+    )
+
 # Create the compiled psi graph with persistent store
 from langgraph.prebuilt import ToolNode  # Use prebuilt module for imports
 
@@ -466,11 +486,9 @@ initialize_configs(store)
 # Log store status
 print("\nStore initialization status:")
 try:
-    config = store.get("default:v1", "config")
-    print(f"Config found in store: {'Yes' if config else 'No'}")
-    print(f"Config type: {type(config)}")
-    if config and not isinstance(config, str):
-        print(f"Config representation: {repr(config)}")
+    configs = store.search(AGENT_CONFIGS_NAMESPACE)
+    print(f"Config found in store: {'Yes' if configs else 'No'}")
+    print(f"Config representation: {repr(configs)}")
 except Exception as e:
     print(f"Error accessing store: {e}")
     
