@@ -123,11 +123,7 @@ try:
             if isinstance(message, dict):
                 print(f"[{i}] Role: {message.get('role', 'unknown')}")
                 content = message.get('content', '')
-                # Print shortened content if it's too long
-                if len(content) > 200:
-                    print(f"Content: {content[:200]}...")
-                else:
-                    print(f"Content: {content}")
+                print(f"Content: {content}")
             else:
                 print(f"[{i}] {str(message)[:100]}...")
             print("-" * 40)
