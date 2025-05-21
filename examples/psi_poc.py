@@ -302,10 +302,11 @@ def divide(a: float, b: float):
 
 # Global registry for nodes - using Any for the value type
 node_registry: Dict[str, Any] = {}
+PLANNER_NODE_ID = "__planner_node__"
 
 # Function to create a planner node
-def create_planner_node(config_id: str, version_id: str, store: BaseStore) -> Any:
-    """Create a new planner node with the specified configuration."""
+def create_planner_node(store: BaseStore) -> Any:
+    """Create a new planner node with the store dependency."""
     # Create the node using the injected store
     node = (
         StateGraph(MessagesState)
@@ -317,11 +318,11 @@ def create_planner_node(config_id: str, version_id: str, store: BaseStore) -> An
     return node
 
 # Function to get or create a node
-def _get_or_create_node(config_id: str, version_id: str, store: BaseStore) -> str:
+def _get_or_create_node(store: BaseStore) -> str:
     """Get or create a node and return its registry ID."""
-    node_id = f"{config_id}:{version_id}"
+    node_id = PLANNER_NODE_ID
     if node_id not in node_registry:
-        node_registry[node_id] = create_planner_node(config_id, version_id, store)
+        node_registry[node_id] = create_planner_node(store)
     return node_id
 
 # Handler for the planner node
@@ -358,14 +359,11 @@ def task_handler(
     
     # Get or create planner node if not already in state
     if "planner_node_id" not in state or not state["planner_node_id"]:
-        config_id = "default"
-        version_id = "v1"
-        
         # Initialize the node registry dictionary if not present
-        planner_node_id = _get_or_create_node(config_id, version_id, store)
+        planner_node_id = _get_or_create_node(store)
         
         initialized_node_ids = state.get("initialized_node_ids", {})
-        initialized_node_ids[(config_id, version_id)] = planner_node_id
+        initialized_node_ids[PLANNER_NODE_ID] = planner_node_id
         
         updated_state = {
             "messages": messages,
