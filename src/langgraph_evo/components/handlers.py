@@ -5,7 +5,7 @@ from typing import Annotated, Any, Dict, List
 
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.store.base import BaseStore
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph_evo.core.state import PsiState
 from langgraph_evo.core.registry import _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from langgraph_evo.core.config import parse_graph_config
@@ -81,7 +81,7 @@ def task_handler(
                 break
             elif hasattr(msg, "type") and msg.type == "human":
                 # Convert to dict format if it's a Message object
-                last_user_message = {"role": "user", "content": msg.content}
+                last_user_message = HumanMessage(content=msg.content)
                 break
         
         if not last_user_message:
@@ -90,7 +90,7 @@ def task_handler(
             if isinstance(last_msg, dict):
                 last_user_message = last_msg
             else:
-                last_user_message = {"role": "user", "content": last_msg.content}
+                last_user_message = HumanMessage(content=last_msg.content)
         
         # Process with the planner
         planner_result = planner.invoke({"messages": [last_user_message]})
@@ -108,12 +108,12 @@ def task_handler(
         config = match.group(1)
     else:
         print(f"Warning: Could not find agent_config in response: {content[:100]}...")
-        response = {"role": "assistant", "content": "Sorry, I'm unable to create an agent to perform the task."}
+        response = AIMessage(content="Sorry, I'm unable to create an agent to perform the task.")
         updated_state["messages"] = messages + [response]
         return updated_state
 
     # Add a response to the message history
-    response = {"role": "assistant", "content": "I'm analyzing your request..."}
+    response = AIMessage(content="I'm analyzing your request...")
     
     try:
         parsed_config = parse_graph_config(config)
@@ -122,18 +122,12 @@ def task_handler(
         # Create the graph using the registry (no need to pass tools explicitly)
         graph = create_graph(parsed_config)
         result = graph.invoke({"messages": [last_user_message]})
-        response = {
-            "role": "assistant",
-            "content": result["messages"][-1].content
-        }
+        response = AIMessage(content=result["messages"][-1].content)
 
         print("Result:", response)
     except Exception as e:
         print(f"Error creating/running agent: {e}")
-        response = {
-            "role": "assistant",
-            "content": "I processed your request but encountered issues with my agent configuration system."
-        }
+        response = AIMessage(content="I processed your request but encountered issues with my agent configuration system.")
     
     # Return updated state with our response
     updated_state["messages"] = messages + [response]

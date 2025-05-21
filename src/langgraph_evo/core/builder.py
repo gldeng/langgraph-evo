@@ -7,7 +7,6 @@ import builtins
 from langgraph.graph import StateGraph, START, END
 from langgraph.store.memory import InMemoryStore
 
-from langgraph_evo.components.tools import name_of_transfer_tool
 from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.config import GraphConfig
 from langgraph_evo.core.tool_registry import get_tool, has_tool, resolve_tool
@@ -22,7 +21,7 @@ def create_graph(config: GraphConfig):
         A compiled graph that can be executed
     """
     # Import here to avoid circular imports
-    from langgraph_evo.components.tools import create_handoff_tool
+    from langgraph_evo.components.tools import create_handoff_tool, name_of_transfer_tool
     from langgraph.prebuilt import create_react_agent
     
     # Create a mapping of tool names to actual tool objects
