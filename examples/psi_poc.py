@@ -387,33 +387,22 @@ def task_handler(
     planner_response = planner_result["messages"][-1]
     
     # Inside task_handler, handle both dictionary and Message object types for the response
-    if hasattr(planner_response, "content"):
-        # Use regex to extract the config from the response
-        match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response.content, re.DOTALL)
-        if match:
-            config = match.group(1)
-            # Config storage will be handled by separate functions
-        else:
-            print(f"Warning: Could not find agent_config in response: {planner_response.content[:100]}...")
-            # Get the config from the store or use default
-            config_key = "default:v1"
-            config = store.get(config_key, "config")
-            # Make sure the config is a proper string
-            if not isinstance(config, str):
-                config = graph_config
+    try:
+        content = planner_response.content if hasattr(planner_response, "content") else planner_response["content"]
+    except (AttributeError, TypeError, KeyError) as e:
+        print(f"Warning: Could not extract content from planner response: {e}")
+        content = ""
+
+    # Search for agent configuration
+    match = re.search(r'<agent_config>(.*?)</agent_config>', content, re.DOTALL)
+    if match:
+        config = match.group(1)
+        # Config storage will be handled by separate functions
     else:
-        match = re.search(r'<agent_config>(.*?)</agent_config>', planner_response["content"], re.DOTALL)
-        if match:
-            config = match.group(1)
-            # Config storage will be handled by separate functions
-        else:
-            print(f"Warning: Could not find agent_config in response: {planner_response['content'][:100]}...")
-            # Get the config from the store or use default
-            config_key = "default:v1"
-            config = store.get(config_key, "config")
-            # Make sure the config is a proper string
-            if not isinstance(config, str):
-                config = graph_config
+        print(f"Warning: Could not find agent_config in response: {content[:100]}...")
+        response = {"role": "assistant", "content": "Sorry, I'm unable to create an agent to perform the task."}
+        updated_state["messages"] = messages + [response]
+        return updated_state
 
     # Add a response to the message history
     response = {"role": "assistant", "content": "I'm analyzing your request..."}
