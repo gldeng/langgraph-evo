@@ -22,6 +22,75 @@ register_tool("web_search", web_search)
 # Register standard tools (add, multiply, divide)
 register_standard_tools()
 
+two_agents_with_supervisor_config = ConfigRecord(
+    name="two_agents_with_supervisor",
+    version="1.0",
+    description="Two agents with a supervisor",
+    config="""
+tools:
+  - name: web_search
+    script: web_search
+    description: Search the web for information.
+  - name: add
+    script: add
+    description: Add two numbers.
+  - name: multiply
+    script: multiply
+    description: Multiply two numbers.
+  - name: divide
+    script: divide
+    description: Divide two numbers.
+nodes:
+  - name: supervisor
+    type: react
+    is_entry_point: true
+    config:
+      model: openai:gpt-4.1
+      prompt: |
+          You are a supervisor managing two agents:
+          - a research agent. Assign research-related tasks to this agent
+          - a math agent. Assign math-related tasks to this agent
+          Assign work to one agent at a time, do not call agents in parallel.
+          Do not do any work yourself.
+          
+          IMPORTANT: The human may ask follow-up questions. Use your memory of previous 
+          interactions to provide context-aware responses. Refer to previous research 
+          and calculations when answering follow-ups.
+  - name: research_agent
+    type: react
+    config:
+      model: openai:gpt-3.5-turbo
+      prompt: |
+          You are a research agent.
+          INSTRUCTIONS:
+          - Assist ONLY with research-related tasks, DO NOT do any math
+          - After you're done with your tasks, respond to the supervisor directly
+          - Respond ONLY with the results of your work, do NOT include ANY other text.
+          - When processing follow-up questions, refer to previously researched information when appropriate.
+      tools:
+        - web_search
+  - name: math_agent
+    type: react
+    config:
+      model: openai:gpt-4.1
+      prompt: |
+          You are a math agent.
+          INSTRUCTIONS:
+          - Assist ONLY with math-related tasks
+          - After you're done with your tasks, respond to the supervisor directly
+          - Respond ONLY with the results of your work, do NOT include ANY other text.
+          - When processing follow-up questions, refer to previously calculated values when appropriate.
+      tools:
+        - add
+        - multiply
+        - divide
+edges:
+  - from: supervisor
+    to: research_agent
+  - from: supervisor
+    to: math_agent
+"""
+)
 
 math_agent_config = ConfigRecord(
     name="math_agent",
@@ -102,6 +171,7 @@ def run_psi_system():
     psi = create_psi_graph(store)
 
     # Initialize configurations in the store
+    add_config(store, two_agents_with_supervisor_config)
     add_config(store, math_agent_config)
     add_config(store, research_agent_config)
 
