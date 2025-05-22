@@ -165,8 +165,6 @@ def task_handler(
     
     # Return updated state with our response
     updated_state["messages"] = messages + [response]
-    if supervisor_graph:
-        supervisor_graph.add_node(graph.name)
 
     return updated_state
 
