@@ -13,3 +13,4 @@ class GraphState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     config: ConfigRecord
     children_states: Dict[str, GraphState]  # Maps node names to registry IDs
+    initialized_node_ids: set[str]  # Maps node names to registry IDs

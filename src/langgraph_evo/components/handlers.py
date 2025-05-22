@@ -64,8 +64,8 @@ def task_handler(
         # Initialize the node registry dictionary if not present
         planner_node_id = _get_or_create_node(store)
         
-        initialized_node_ids = state.get("initialized_node_ids", {})
-        initialized_node_ids[PLANNER_NODE_ID] = planner_node_id
+        initialized_node_ids = state.get("initialized_node_ids", set())
+        initialized_node_ids.add(PLANNER_NODE_ID)
         
         updated_state = {
             "messages": messages,
@@ -148,6 +148,7 @@ def task_handler(
         graph = create_graph(config_name, config_version, parsed_config, store)
 
         node_registry[graph.name] = graph
+        # TODO: Update supervisor to use the new graph
         
         # Pass the full message history to the graph for proper context in follow-up questions
         result = graph.invoke({"messages": messages})
@@ -160,6 +161,7 @@ def task_handler(
     
     # Return updated state with our response
     updated_state["messages"] = messages + [response]
+    updated_state["initialized_node_ids"].add(graph.name)
     return updated_state
 
 # Simple wrapper for task_handler that directly invokes it with the store

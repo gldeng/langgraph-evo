@@ -130,7 +130,7 @@ def run_psi_system():
                 "content": "find US and New York state GDP in 2024. what % of US GDP was New York state?",
             }
         ],
-        "initialized_node_ids": {}
+        "initialized_node_ids": set()
     }
 
     # Run the PSI system in a loop to support follow-up questions
