@@ -6,8 +6,9 @@ from typing import Annotated, Any, Dict, List
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.store.base import BaseStore
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph_evo.components.supervisor import create_supervisor
 from langgraph_evo.core.state import GraphState
-from langgraph_evo.core.registry import _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
+from langgraph_evo.core.registry import SUPERVISOR_NODE_ID, _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from langgraph_evo.core.config import parse_graph_config
 from langgraph_evo.core.builder import create_graph
 
@@ -77,7 +78,7 @@ def task_handler(
     
     # Get the planner node from registry
     planner_node_id = updated_state["planner_node_id"]
-    planner = node_registry[planner_node_id]
+    planner = node_registry[planner_node_id][1]
     
     try:
         # Find the last user message for fallback processing if needed
@@ -139,6 +140,7 @@ def task_handler(
 
     # Add a response to the message history
     response = AIMessage(content="I'm analyzing your request...")
+    supervisor_graph = None
     
     try:
         parsed_config = parse_graph_config(agent_config_str)
@@ -146,12 +148,14 @@ def task_handler(
 
         # Create the graph using the registry (no need to pass tools explicitly)
         graph = create_graph(config_name, config_version, parsed_config, store)
+        updated_state["initialized_node_ids"].add(graph.name)
 
-        node_registry[graph.name] = graph
-        # TODO: Update supervisor to use the new graph
-        
+        node_registry[graph.name] = (config_description, graph)
+        supervisor_graph = create_supervisor([name for name in updated_state["initialized_node_ids"] if not name.startswith("__")], store)
+        node_registry[SUPERVISOR_NODE_ID] = ("supervisor", supervisor_graph)
+
         # Pass the full message history to the graph for proper context in follow-up questions
-        result = graph.invoke({"messages": messages})
+        result = supervisor_graph.invoke({"messages": messages})
         response = AIMessage(content=result["messages"][-1].content)
 
         print("Result:", response)
@@ -161,7 +165,9 @@ def task_handler(
     
     # Return updated state with our response
     updated_state["messages"] = messages + [response]
-    updated_state["initialized_node_ids"].add(graph.name)
+    if supervisor_graph:
+        supervisor_graph.add_node(graph.name)
+
     return updated_state
 
 # Simple wrapper for task_handler that directly invokes it with the store

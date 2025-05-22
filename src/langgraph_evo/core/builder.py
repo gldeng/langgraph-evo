@@ -118,4 +118,4 @@ def create_graph(config_name: str, config_version: str, config: GraphConfig, sto
             print(f"Error adding edge from '{edge.from_}' to '{edge.to}': {e}")
     
     # Compile and return the graph
-    return graph.compile(name=f"{config_name}:{config_version}", store=store)
+    return graph.compile(name=f"{config_name}__{config_version}", store=store)
