@@ -168,10 +168,10 @@ supervisor = (
     # always return back to the supervisor
     .add_edge("research_agent", "supervisor")
     .add_edge("math_agent", "supervisor")
-    .compile()
+    .compile(debug=True)
 )
 
-for chunk in supervisor.stream(
+result = supervisor.invoke(
     {
         "messages": [
             {
@@ -180,10 +180,11 @@ for chunk in supervisor.stream(
             }
         ]
     },
-):
-    pretty_print_messages(chunk, last_message=True)
+)
 
-final_message_history = chunk["supervisor"]["messages"]
+pretty_print_messages(result, last_message=True)
 
-for message in final_message_history:
-    message.pretty_print()
+# final_message_history = result["supervisor"]["messages"]
+
+    # for message in final_message_history:
+    #     message.pretty_print()

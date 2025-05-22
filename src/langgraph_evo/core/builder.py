@@ -26,6 +26,8 @@ def create_graph(config_name: str, config_version: str, config: GraphConfig, sto
     
     # Create a mapping of tool names to actual tool objects
     tool_map = {}
+    if config.edges is None:
+        config.edges = []
     
     # Process tool configurations
     if config.tools:

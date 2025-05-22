@@ -152,7 +152,7 @@ def task_handler(
 
         node_registry[graph.name] = (config_description, graph)
         supervisor_graph = create_supervisor([name for name in updated_state["initialized_node_ids"] if not name.startswith("__")], store)
-        node_registry[SUPERVISOR_NODE_ID] = ("supervisor", supervisor_graph)
+        node_registry[SUPERVISOR_NODE_ID] = ("__supervisor", supervisor_graph)
 
         # Pass the full message history to the graph for proper context in follow-up questions
         result = supervisor_graph.invoke({"messages": messages})

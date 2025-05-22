@@ -8,7 +8,9 @@ from langchain_core.messages import ToolMessage
 
 
 def name_of_transfer_tool(agent_name: str):
-    return f"transfer_to_{agent_name}"
+    raw_name = f"transfer_to_{agent_name}"
+    # Replace any non-alphanumeric characters with underscores
+    return ''.join(c if c.isalnum() or c in ['_', '-'] else '_' for c in raw_name)
 
 def create_handoff_tool(*, agent_name: str, description: str | None = None):
     """Create a tool that transfers control to another agent.

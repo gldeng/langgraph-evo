@@ -2,6 +2,8 @@
 from typing import Dict, Any
 from dotenv import load_dotenv
 from langgraph.store.memory import InMemoryStore
+
+from langgraph_evo.core.config import ConfigRecord
 # Load environment variables from .env file
 load_dotenv()
 
@@ -9,7 +11,7 @@ load_dotenv()
 from langchain_tavily import TavilySearch
 
 # Import from the langgraph_evo package
-from langgraph_evo.core.store import initialize_configs
+from langgraph_evo.core.store import add_config
 from langgraph_evo.core.tool_registry import register_tool, register_standard_tools
 from langgraph_evo import create_psi_graph
 
@@ -20,51 +22,22 @@ register_tool("web_search", web_search)
 # Register standard tools (add, multiply, divide)
 register_standard_tools()
 
-# Sample graph configuration - fixed YAML format
-graph_config = """
+
+math_agent_config = ConfigRecord(
+    name="math_agent",
+    version="1.0",
+    description="An agent that can add, multiply, and divide",
+    config="""
 tools:
-  - name: web_search
-    script: web_search
-    description: Search the web for information.
   - name: add
     script: add
     description: Add two numbers.
   - name: multiply
     script: multiply
     description: Multiply two numbers.
-  - name: divide
-    script: divide
-    description: Divide two numbers.
 nodes:
-  - name: supervisor
-    type: react
-    is_entry_point: true
-    config:
-      model: openai:gpt-4.1
-      prompt: |
-          You are a supervisor managing two agents:
-          - a research agent. Assign research-related tasks to this agent
-          - a math agent. Assign math-related tasks to this agent
-          Assign work to one agent at a time, do not call agents in parallel.
-          Do not do any work yourself.
-          
-          IMPORTANT: The human may ask follow-up questions. Use your memory of previous 
-          interactions to provide context-aware responses. Refer to previous research 
-          and calculations when answering follow-ups.
-  - name: research_agent
-    type: react
-    config:
-      model: openai:gpt-3.5-turbo
-      prompt: |
-          You are a research agent.
-          INSTRUCTIONS:
-          - Assist ONLY with research-related tasks, DO NOT do any math
-          - After you're done with your tasks, respond to the supervisor directly
-          - Respond ONLY with the results of your work, do NOT include ANY other text.
-          - When processing follow-up questions, refer to previously researched information when appropriate.
-      tools:
-        - web_search
   - name: math_agent
+    is_entry_point: true
     type: react
     config:
       model: openai:gpt-4.1
@@ -79,12 +52,34 @@ nodes:
         - add
         - multiply
         - divide
-edges:
-  - from: supervisor
-    to: research_agent
-  - from: supervisor
-    to: math_agent
-"""
+""")
+
+research_agent_config = ConfigRecord(
+    name="research_agent",
+    version="1.0",
+    description="An agent that can search the web for information",
+    config="""
+tools:
+  - name: web_search
+    script: web_search
+    description: Search the web for information.
+nodes:
+  - name: research_agent
+    is_entry_point: true
+    type: react
+    config:
+      model: openai:gpt-3.5-turbo
+      prompt: |
+          You are a research agent.
+          INSTRUCTIONS:
+          - Assist ONLY with research-related tasks, DO NOT do any math
+          - After you're done with your tasks, respond to the supervisor directly
+          - Respond ONLY with the results of your work, do NOT include ANY other text.
+          - When processing follow-up questions, refer to previously researched information when appropriate.
+      tools:
+        - web_search
+""")
+
 
 def print_messages(messages):
     """Helper function to print message history in a readable format."""
@@ -107,11 +102,8 @@ def run_psi_system():
     psi = create_psi_graph(store)
 
     # Initialize configurations in the store
-    initialize_configs(store, 
-                       """An agent that have the following capabilities:
-                       - math which involves add, multiply, divide
-                       - research which involves web search""", 
-                       graph_config)
+    add_config(store, math_agent_config)
+    add_config(store, research_agent_config)
 
     # Log store status
     print("\nStore initialization status:")

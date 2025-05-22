@@ -42,7 +42,7 @@ class GraphConfig(BaseModel):
     """Complete graph configuration."""
     tools: Optional[List[Tool]] = None
     nodes: List[Node]
-    edges: List[Edge]
+    edges: Optional[List[Edge]] = None
     
     class Config:
         """Pydantic configuration."""
