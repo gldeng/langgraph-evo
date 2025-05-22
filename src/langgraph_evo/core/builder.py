@@ -6,12 +6,12 @@ import builtins
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.store.memory import InMemoryStore
-
+from langgraph.store.base import BaseStore
 from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.config import GraphConfig
 from langgraph_evo.core.tool_registry import get_tool, has_tool, resolve_tool
 
-def create_graph(config: GraphConfig):
+def create_graph(config: GraphConfig, store: BaseStore):
     """Create a graph based on the configuration.
     
     Args:
@@ -118,4 +118,4 @@ def create_graph(config: GraphConfig):
             print(f"Error adding edge from '{edge.from_}' to '{edge.to}': {e}")
     
     # Compile and return the graph
-    return graph.compile(store=InMemoryStore()) 
+    return graph.compile(store=store)

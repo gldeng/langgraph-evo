@@ -131,12 +131,6 @@ def run_psi_system():
 
     # Run the PSI system in a loop to support follow-up questions
     try:
-        # Track conversation context that might be useful for the agents
-        conversation_context = {
-            "session_start_time": "2024-06-20T10:00:00Z",
-            "conversation_id": "demo-session-001",
-            "conversation_topic": "Economic analysis"
-        }
         
         while True:
             print("\nProcessing question...")
@@ -145,9 +139,7 @@ def run_psi_system():
                 current_state,
                 config={
                     "metadata": {
-                        "context": conversation_context,
-                        "turn_number": len(current_state["messages"]),
-                        "is_follow_up": len(current_state["messages"]) > 1
+                        "agent_id": ("root",)
                     }
                 }
             )
@@ -172,9 +164,6 @@ def run_psi_system():
                 "content": follow_up
             })
             
-            # Update the conversation context with the new question
-            conversation_context["last_question"] = follow_up
-            conversation_context["questions_count"] = len([m for m in current_state["messages"] if m.get("role") == "user"])
         
     except Exception as e:
         print(f"Error running the system: {e}")

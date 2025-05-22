@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, List
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.store.base import BaseStore
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph_evo.core.state import PsiState
+from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.registry import _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from langgraph_evo.core.config import parse_graph_config
 from langgraph_evo.core.builder import create_graph
@@ -37,7 +37,7 @@ def planner_node_handler(
     return {"messages": messages + [response]}
 
 def task_handler(
-    state: Annotated[PsiState, InjectedState],
+    state: Annotated[GraphState, InjectedState],
     store: Annotated[BaseStore, InjectedStore],
     config: Dict[str, Any] = None
 ):
@@ -115,7 +115,7 @@ def task_handler(
     # Search for agent configuration
     match = re.search(r'<agent_config>(.*?)</agent_config>', content, re.DOTALL)
     if match:
-        config = match.group(1)
+        agent_config_str = match.group(1)
     else:
         print(f"Warning: Could not find agent_config in response: {content[:100]}...")
         response = AIMessage(content="Sorry, I'm unable to create an agent to perform the task.")
@@ -126,11 +126,11 @@ def task_handler(
     response = AIMessage(content="I'm analyzing your request...")
     
     try:
-        parsed_config = parse_graph_config(config)
+        parsed_config = parse_graph_config(agent_config_str)
         print("Successfully parsed the agent configuration")
 
         # Create the graph using the registry (no need to pass tools explicitly)
-        graph = create_graph(parsed_config)
+        graph = create_graph(parsed_config, store)
         
         # Pass the full message history to the graph for proper context in follow-up questions
         result = graph.invoke({"messages": messages})

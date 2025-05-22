@@ -1,6 +1,6 @@
 
 from langgraph_evo.core.store import BaseStore
-from langgraph_evo.core.state import PsiState
+from langgraph_evo.core.state import GraphState
 from langgraph_evo.components.handlers import task_handler_wrapped
 from langgraph.graph import StateGraph, START, END
 
@@ -11,7 +11,7 @@ def create_psi_graph(store: BaseStore):
     register_standard_tools()
 
     psi = (
-        StateGraph(PsiState)
+        StateGraph(GraphState)
         .add_node('task_handler', task_handler_wrapped)
         .add_edge(START, "task_handler")
         .add_edge("task_handler", END)

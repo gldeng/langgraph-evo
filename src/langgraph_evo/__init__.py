@@ -7,7 +7,7 @@ based on the PSI system.
 from typing import Dict, Any, List, Optional, Union, Type
 
 # Core imports
-from .core.state import GraphState, PsiState
+from .core.state import GraphState
 from .core.config import GraphConfig, Node, Edge, Tool, ConfigRecord, parse_graph_config
 from .core.builder import create_graph
 from .core.registry import node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
