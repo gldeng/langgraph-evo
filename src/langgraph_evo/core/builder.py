@@ -11,7 +11,7 @@ from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.config import GraphConfig
 from langgraph_evo.core.tool_registry import get_tool, has_tool, resolve_tool
 
-def create_graph(config: GraphConfig, store: BaseStore):
+def create_graph(config_name: str, config_version: str, config: GraphConfig, store: BaseStore):
     """Create a graph based on the configuration.
     
     Args:
@@ -118,4 +118,4 @@ def create_graph(config: GraphConfig, store: BaseStore):
             print(f"Error adding edge from '{edge.from_}' to '{edge.to}': {e}")
     
     # Compile and return the graph
-    return graph.compile(store=store)
+    return graph.compile(name=f"{config_name}:{config_version}", store=store)

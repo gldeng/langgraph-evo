@@ -122,6 +122,21 @@ def task_handler(
         updated_state["messages"] = messages + [response]
         return updated_state
 
+    # Extract additional configuration fields
+    config_name_match = re.search(r'<config_name>(.*?)</config_name>', content, re.DOTALL)
+    config_name = config_name_match.group(1).strip() if config_name_match else "default"
+    
+    config_version_match = re.search(r'<config_version>(.*?)</config_version>', content, re.DOTALL)
+    config_version = config_version_match.group(1).strip() if config_version_match else "v1"
+    
+    config_description_match = re.search(r'<config_description>(.*?)</config_description>', content, re.DOTALL)
+    config_description = config_description_match.group(1).strip() if config_description_match else ""
+    
+    # Print extracted config metadata
+    print(f"Config Name: {config_name}")
+    print(f"Config Version: {config_version}")
+    print(f"Config Description: {config_description[:50]}..." if len(config_description) > 50 else f"Config Description: {config_description}")
+
     # Add a response to the message history
     response = AIMessage(content="I'm analyzing your request...")
     
@@ -130,7 +145,9 @@ def task_handler(
         print("Successfully parsed the agent configuration")
 
         # Create the graph using the registry (no need to pass tools explicitly)
-        graph = create_graph(parsed_config, store)
+        graph = create_graph(config_name, config_version, parsed_config, store)
+
+        node_registry[graph.name] = graph
         
         # Pass the full message history to the graph for proper context in follow-up questions
         result = graph.invoke({"messages": messages})

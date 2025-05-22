@@ -30,21 +30,42 @@ def create_react_planner(model: str = "openai:gpt-4"):
     When a user asks a question:
     1. Retrieve all the agent configurations using the get_configs tool
     2. For each configuration, analyze whether this configuration can solve the user's query
-    3. If it can, return the configuration string
+    3. If it can, return the configuration string along with other information
 
     Output format:
-    - If it can, return the configuration string in a <agent_config> tag
+    - If it can, return the configuration infromation with the following format:
+    <agent_config>
+    Config string here
+    </agent_config>
+    <config_name>
+    Config name here
+    </config_name>
+    <config_version>
+    Config version here
+    </config_version>
+    <config_description>
+    Config description here
+    </config_description>
     - If it cannot, return "No configuration found"
 
     Example output:
     <agent_config>
     Config string here
     </agent_config>
+    <config_name>
+    Config name here
+    </config_name>
+    <config_version>
+    Config version here
+    </config_version>
+    <config_description>
+    Config description here
+    </config_description>
 
     Only do the following but not more than that:
     - Retrieve the agent configurations
     - Analyze whether each configuration can solve the user's query
-    - Return the configuration string if it can, otherwise return "No configuration found"
+    - Return the configuration information if it can, otherwise return "No configuration found"
     """
     
     # Create the React agent
