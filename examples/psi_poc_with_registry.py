@@ -80,54 +80,78 @@ edges:
     to: math_agent
 """
 
-# Create the store instance to be shared
-store = InMemoryStore()
+def print_messages(messages):
+    """Helper function to print message history in a readable format."""
+    print("\nMessage History:")
+    for i, message in enumerate(messages):
+        if isinstance(message, dict):
+            print(f"[{i}] Role: {message.get('role', 'unknown')}")
+            content = message.get('content', '')
+            print(f"Content: {content}")
+        else:
+            print(f"[{i}] {str(message)[:100]}...")
+        print("-" * 40)
 
-# Create the PSI graph with main task handler
-psi = create_psi_graph(store)
+def run_psi_system():
+    """Run the PSI system with support for follow-up questions."""
+    # Create the store instance to be shared
+    store = InMemoryStore()
 
-# Initialize configurations in the store
-initialize_configs(store, graph_config)
+    # Create the PSI graph with main task handler
+    psi = create_psi_graph(store)
 
-# Log store status
-print("\nStore initialization status:")
-try:
-    configs = store.search(("agent", "configs"))
-    print(f"Config found in store: {'Yes' if configs else 'No'}")
-    print(f"Config count: {len(configs)}")
-except Exception as e:
-    print(f"Error accessing store: {e}")
+    # Initialize configurations in the store
+    initialize_configs(store, graph_config)
 
-# Initial state with empty initialized_node_ids dictionary
-initial_state = {
-    "messages": [
-        {
-            "role": "user",
-            "content": "find US and New York state GDP in 2024. what % of US GDP was New York state?",
-        }
-    ],
-    "initialized_node_ids": {}
-}
+    # Log store status
+    print("\nStore initialization status:")
+    try:
+        configs = store.search(("agent", "configs"))
+        print(f"Config found in store: {'Yes' if configs else 'No'}")
+        print(f"Config count: {len(configs)}")
+    except Exception as e:
+        print(f"Error accessing store: {e}")
 
-# Run the PSI system
-print("\nRunning the PSI system:")
-try:
-    final_state = psi.invoke(initial_state)
-    
-    print(f"Final state keys: {list(final_state.keys())}")
-    
-    # Print final messages in a readable format
-    if "messages" in final_state:
-        print("\nFinal Message History:")
-        for i, message in enumerate(final_state["messages"]):
-            if isinstance(message, dict):
-                print(f"[{i}] Role: {message.get('role', 'unknown')}")
-                content = message.get('content', '')
-                print(f"Content: {content}")
+    # Initial state with the first user question
+    current_state = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "find US and New York state GDP in 2024. what % of US GDP was New York state?",
+            }
+        ],
+        "initialized_node_ids": {}
+    }
+
+    # Run the PSI system in a loop to support follow-up questions
+    try:
+        while True:
+            print("\nProcessing question...")
+            # Invoke the PSI system with the current state
+            current_state = psi.invoke(current_state)
+            
+            # Print the conversation history
+            if "messages" in current_state:
+                print_messages(current_state["messages"])
             else:
-                print(f"[{i}] {str(message)[:100]}...")
-            print("-" * 40)
-    else:
-        print("No messages found in the final state")
-except Exception as e:
-    print(f"Error running the system: {e}") 
+                print("No messages found in the state")
+            
+            # Ask for a follow-up question
+            follow_up = input("\nFollow-up question (or type 'exit' to quit): ").strip()
+            
+            # Check if the user wants to exit
+            if follow_up.lower() in ["exit", "quit", "bye"]:
+                print("Exiting conversation.")
+                break
+            
+            # Add the follow-up question to the conversation
+            current_state["messages"].append({
+                "role": "user",
+                "content": follow_up
+            })
+        
+    except Exception as e:
+        print(f"Error running the system: {e}")
+
+if __name__ == "__main__":
+    run_psi_system() 
