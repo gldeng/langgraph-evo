@@ -107,7 +107,11 @@ def run_psi_system():
     psi = create_psi_graph(store)
 
     # Initialize configurations in the store
-    initialize_configs(store, graph_config)
+    initialize_configs(store, 
+                       """An agent that have the following capabilities:
+                       - math which involves add, multiply, divide
+                       - research which involves web search""", 
+                       graph_config)
 
     # Log store status
     print("\nStore initialization status:")

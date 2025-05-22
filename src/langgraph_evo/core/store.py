@@ -4,7 +4,7 @@ from langgraph.store.base import BaseStore
 from langgraph_evo.core.config import ConfigRecord
 from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 
-def initialize_configs(store: BaseStore, graph_config: str):
+def initialize_configs(store: BaseStore, description: str, graph_config: str):
     """Initialize the default configurations in the store.
     
     Args:
@@ -15,7 +15,7 @@ def initialize_configs(store: BaseStore, graph_config: str):
     config_record = ConfigRecord(
         name="default", 
         version="v1", 
-        description="Default configuration", 
+        description=description, 
         config=graph_config
     )
     
