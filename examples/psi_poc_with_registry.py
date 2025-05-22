@@ -47,6 +47,10 @@ nodes:
           - a math agent. Assign math-related tasks to this agent
           Assign work to one agent at a time, do not call agents in parallel.
           Do not do any work yourself.
+          
+          IMPORTANT: The human may ask follow-up questions. Use your memory of previous 
+          interactions to provide context-aware responses. Refer to previous research 
+          and calculations when answering follow-ups.
   - name: research_agent
     type: react
     config:
@@ -57,6 +61,7 @@ nodes:
           - Assist ONLY with research-related tasks, DO NOT do any math
           - After you're done with your tasks, respond to the supervisor directly
           - Respond ONLY with the results of your work, do NOT include ANY other text.
+          - When processing follow-up questions, refer to previously researched information when appropriate.
       tools:
         - web_search
   - name: math_agent
@@ -69,6 +74,7 @@ nodes:
           - Assist ONLY with math-related tasks
           - After you're done with your tasks, respond to the supervisor directly
           - Respond ONLY with the results of your work, do NOT include ANY other text.
+          - When processing follow-up questions, refer to previously calculated values when appropriate.
       tools:
         - add
         - multiply
@@ -125,10 +131,26 @@ def run_psi_system():
 
     # Run the PSI system in a loop to support follow-up questions
     try:
+        # Track conversation context that might be useful for the agents
+        conversation_context = {
+            "session_start_time": "2024-06-20T10:00:00Z",
+            "conversation_id": "demo-session-001",
+            "conversation_topic": "Economic analysis"
+        }
+        
         while True:
             print("\nProcessing question...")
-            # Invoke the PSI system with the current state
-            current_state = psi.invoke(current_state)
+            # Invoke the PSI system with the current state and additional context
+            current_state = psi.invoke(
+                current_state,
+                config={
+                    "metadata": {
+                        "context": conversation_context,
+                        "turn_number": len(current_state["messages"]),
+                        "is_follow_up": len(current_state["messages"]) > 1
+                    }
+                }
+            )
             
             # Print the conversation history
             if "messages" in current_state:
@@ -149,6 +171,10 @@ def run_psi_system():
                 "role": "user",
                 "content": follow_up
             })
+            
+            # Update the conversation context with the new question
+            conversation_context["last_question"] = follow_up
+            conversation_context["questions_count"] = len([m for m in current_state["messages"] if m.get("role") == "user"])
         
     except Exception as e:
         print(f"Error running the system: {e}")

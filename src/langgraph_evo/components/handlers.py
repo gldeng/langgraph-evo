@@ -38,18 +38,26 @@ def planner_node_handler(
 
 def task_handler(
     state: Annotated[PsiState, InjectedState],
-    store: Annotated[BaseStore, InjectedStore]
+    store: Annotated[BaseStore, InjectedStore],
+    config: Dict[str, Any] = None
 ):
     """A node handler that processes messages using the agent system.
     
     Args:
         state: The current state
         store: The store to use
+        config: Optional configuration parameters
         
     Returns:
         Updated state with task results
     """
     messages = state["messages"]
+    
+    # Extract metadata from config if available
+    metadata = {}
+    if config and "metadata" in config:
+        metadata = config["metadata"]
+        print(f"Received metadata in config: {metadata.keys()}")
     
     # Get or create planner node if not already in state
     if "planner_node_id" not in state or not state["planner_node_id"]:
@@ -72,7 +80,7 @@ def task_handler(
     planner = node_registry[planner_node_id]
     
     try:
-        # Find the last user message and ensure it's in the right format
+        # Find the last user message for fallback processing if needed
         last_user_message = None
         for msg in reversed(messages):
             # Handle both dict and Message object types
@@ -84,7 +92,7 @@ def task_handler(
                 last_user_message = HumanMessage(content=msg.content)
                 break
         
-        if not last_user_message:
+        if not last_user_message and messages:
             # If no user message found, use the last message regardless of type
             last_msg = messages[-1]
             if isinstance(last_msg, dict):
@@ -92,8 +100,10 @@ def task_handler(
             else:
                 last_user_message = HumanMessage(content=last_msg.content)
         
-        # Process with the planner
-        planner_result = planner.invoke({"messages": [last_user_message]})
+        # Process with the planner, passing the full conversation history
+        # This allows the planner to understand context from previous interactions
+        # which is essential for follow-up questions
+        planner_result = planner.invoke({"messages": messages})
 
         planner_response = planner_result["messages"][-1]
 
@@ -121,7 +131,9 @@ def task_handler(
 
         # Create the graph using the registry (no need to pass tools explicitly)
         graph = create_graph(parsed_config)
-        result = graph.invoke({"messages": [last_user_message]})
+        
+        # Pass the full message history to the graph for proper context in follow-up questions
+        result = graph.invoke({"messages": messages})
         response = AIMessage(content=result["messages"][-1].content)
 
         print("Result:", response)
@@ -134,9 +146,9 @@ def task_handler(
     return updated_state
 
 # Simple wrapper for task_handler that directly invokes it with the store
-def task_handler_wrapped(state, store):
-    """Simple wrapper for task_handler that passes the injected store."""
-    return task_handler(state, store)
+def task_handler_wrapped(state, store, config=None):
+    """Simple wrapper for task_handler that passes the injected store and config."""
+    return task_handler(state, store, config)
 
 def planner_node_handler_wrapped(state, store):
     """Simple wrapper for planner_node_handler that passes the injected store."""
