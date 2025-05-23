@@ -3,7 +3,7 @@
 from langgraph_evo.core.config import (
     GraphConfig, Node, Edge, Tool, ConfigRecord, parse_graph_config
 )
-from langgraph_evo.core.registry import node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
+from langgraph_evo.core.registry import PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 __all__ = [
     "GraphState",
     "GraphConfig",
@@ -12,7 +12,6 @@ __all__ = [
     "Tool",
     "ConfigRecord",
     "parse_graph_config",
-    "node_registry",
     "PLANNER_NODE_ID",
     "AGENT_CONFIGS_NAMESPACE",
 ] 

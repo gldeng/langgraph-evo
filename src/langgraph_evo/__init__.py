@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, Union, Type
 # Core imports
 from .core.state import GraphState
 from .core.config import GraphConfig, Node, Edge, Tool, ConfigRecord, parse_graph_config
-from .core.registry import node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
+from .core.registry import PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from .core.tool_registry import (
     register_tool, get_tool, has_tool, list_tools, clear_registry, 
     resolve_tool, register_standard_tools
@@ -29,7 +29,6 @@ __all__ = [
     "Tool",
     "ConfigRecord",
     "parse_graph_config",
-    "node_registry",
     "PLANNER_NODE_ID",
     "AGENT_CONFIGS_NAMESPACE",
     

@@ -2,7 +2,6 @@
 from typing import Dict, Any
 
 # Global registry for nodes
-node_registry: Dict[str, Any] = {}
 PLANNER_NODE_ID = "__planner_node__"
 SUPERVISOR_NODE_ID = "__supervisor_node__"
 AGENT_CONFIGS_NAMESPACE = ("agent", "configs")

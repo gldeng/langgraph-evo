@@ -1,6 +1,6 @@
 
 from langgraph_evo.core.config import ConfigRecord, GraphConfig, parse_graph_config
-from langgraph_evo.core.registry import PLANNER_NODE_ID, SUPERVISOR_NODE_ID, node_registry
+from langgraph_evo.core.registry import PLANNER_NODE_ID, SUPERVISOR_NODE_ID
 from langgraph_evo.core.store import BaseStore
 from langgraph_evo.core.state import GraphState
 from langchain_core.messages import AIMessage, HumanMessage
@@ -15,6 +15,8 @@ from langgraph.utils.runnable import RunnableCallable
 from langgraph.prebuilt import InjectedState, InjectedStore, create_react_agent
 from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 import re
+
+node_registry: Dict[str, Any] = {}
 
 class PlannerMixin:
     SYSTEM_PROMPT = """You are an AI agent configurator that helps set up and run AI agent systems.
