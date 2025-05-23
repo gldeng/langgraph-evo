@@ -1,7 +1,7 @@
 """Node handler functions."""
 import re
 import sys
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Optional
 
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langgraph.store.base import BaseStore
@@ -11,6 +11,7 @@ from langgraph_evo.core.state import GraphState
 from langgraph_evo.core.registry import SUPERVISOR_NODE_ID, _get_or_create_node, node_registry, PLANNER_NODE_ID, AGENT_CONFIGS_NAMESPACE
 from langgraph_evo.core.config import parse_graph_config
 from langgraph_evo.core.builder import create_graph
+from langgraph.graph.graph import CompiledGraph
 
 def planner_node_handler(
     state: Annotated[Dict[str, Any], InjectedState],
@@ -61,6 +62,25 @@ def _supervisor_can_handle_task(state, store, config):
         return False, {}
     return True, updated_state
 
+def _get_planner_node(state, store) -> Optional[CompiledGraph]:
+    """Get the planner node from the registry."""
+    cached = node_registry[state["planner_node_id"]][1]
+    if cached:
+        return cached[1]
+    else:
+        planner_node_id = _get_or_create_node(store)
+        planner = node_registry[planner_node_id][1]
+        return planner
+
+def _configurator(state, store, config):
+    """Configurator node handler."""
+    planner = _get_planner_node(state, store)
+    if not planner:
+        return state
+    
+    # Get the last user message
+    messages = state["messages"]
+    last_user_message = None
 
 def task_handler(
     state: Annotated[GraphState, InjectedState],

@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from langgraph.store.memory import InMemoryStore
 
 from langgraph_evo.core.config import ConfigRecord
+from langgraph_evo.psi import PsiGraph
+from langgraph.graph.graph import CompiledGraph
 # Load environment variables from .env file
 load_dotenv()
 
@@ -168,7 +170,8 @@ def run_psi_system():
     store = InMemoryStore()
 
     # Create the PSI graph with main task handler
-    psi = create_psi_graph(store)
+    # psi = create_psi_graph(store)
+    psi = PsiGraph().get_graph(store=store)
 
     # Initialize configurations in the store
     add_config(store, two_agents_with_supervisor_config)
