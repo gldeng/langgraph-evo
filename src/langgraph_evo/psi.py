@@ -17,22 +17,6 @@ from langgraph.prebuilt import InjectedState, InjectedStore, create_react_agent
 from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 import re
 
-
-def create_psi_graph(store: BaseStore):
-
-    from langgraph_evo.core.tool_registry import register_standard_tools
-    register_standard_tools()
-
-    psi = (
-        StateGraph(GraphState)
-        .add_node('task_handler', task_handler_wrapped)
-        .add_edge(START, "task_handler")
-        .add_edge("task_handler", END)
-        .compile(store=store)
-    )
-    return psi
-
-
 class PlannerMixin:
     SYSTEM_PROMPT = """You are an AI agent configurator that helps set up and run AI agent systems.
     

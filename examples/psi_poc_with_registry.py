@@ -15,7 +15,6 @@ from langchain_tavily import TavilySearch
 # Import from the langgraph_evo package
 from langgraph_evo.core.store import add_config
 from langgraph_evo.core.tool_registry import register_tool, register_standard_tools
-from langgraph_evo import create_psi_graph
 
 # Register the tools in the registry
 web_search = TavilySearch(max_results=3)
