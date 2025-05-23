@@ -22,4 +22,4 @@ def _get_or_create_node(store) -> str:
     node_id = PLANNER_NODE_ID
     if node_id not in node_registry:
         node_registry[node_id] = ("planner", create_planner_node(store))
-    return node_id 
+    return node_id

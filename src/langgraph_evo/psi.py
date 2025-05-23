@@ -3,17 +3,20 @@ from langgraph_evo.core.registry import PLANNER_NODE_ID, SUPERVISOR_NODE_ID, _ge
 from langgraph_evo.core.store import BaseStore
 from langgraph_evo.core.state import GraphState
 from langgraph_evo.components.handlers import task_handler_wrapped
-from langgraph_evo.core.config import parse_graph_config
+from langgraph_evo.core.config import ConfigRecord, parse_graph_config
 from langgraph_evo.core.builder import create_graph
 from langgraph_evo.components.supervisor import create_supervisor
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.graph import StateGraph, START, END
+from langchain_core.tools import tool
+from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.state import CompiledStateGraph
-from typing import Dict, Optional, Union, Any
+from typing import Annotated, Dict, List, Optional, Union, Any
 from langgraph.store.base import BaseStore
 from langgraph.types import All, Checkpointer
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.utils.runnable import RunnableCallable
+from langgraph.prebuilt import InjectedState, InjectedStore, create_react_agent
+from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 import re
 
 
@@ -32,7 +35,103 @@ def create_psi_graph(store: BaseStore):
     return psi
 
 
-class PsiGraph(StateGraph):
+class PlannerMixin:
+    SYSTEM_PROMPT = """You are an AI agent configurator that helps set up and run AI agent systems.
+    
+    When a user asks a question:
+    1. Retrieve all the agent configurations using the get_configs tool
+    2. For each configuration, analyze whether this configuration can solve the user's query
+    3. If it can, return the configuration string along with other information
+
+    Output format:
+    - If it can, return the configuration infromation with the following format:
+    <agent_config>
+    Config string here
+    </agent_config>
+    <config_name>
+    Config name here
+    </config_name>
+    <config_version>
+    Config version here
+    </config_version>
+    <config_description>
+    Config description here
+    </config_description>
+    - If it cannot, return "No configuration found"
+
+    Example output:
+    <agent_config>
+    Config string here
+    </agent_config>
+    <config_name>
+    Config name here
+    </config_name>
+    <config_version>
+    Config version here
+    </config_version>
+    <config_description>
+    Config description here
+    </config_description>
+
+    Only do the following but not more than that:
+    - Retrieve the agent configurations
+    - Analyze whether each configuration can solve the user's query
+    - Return the configuration information if it can, otherwise return "No configuration found"
+    """
+
+    @staticmethod
+    def _get_or_create_planner_node(store) -> str:
+        """Get or create a node and return its registry ID.
+        
+        Args:
+            store: The store to use for node creation
+            
+        Returns:
+            str: The registry ID for the node
+        """
+        
+        node_id = PLANNER_NODE_ID
+        if node_id not in node_registry:
+            node_registry[node_id] = ("planner", PlannerMixin._create_planner_node(store))
+        return node_id
+
+    @staticmethod
+    def _create_planner_node(store: BaseStore, model: str = "openai:gpt-4"):
+        """Create a new planner node with the React agent."""
+
+        @tool
+        def get_configs(
+            store: Annotated[BaseStore, InjectedStore]
+        ) -> List[ConfigRecord]:
+            """Retrieve the agent configuration.
+            
+            This tool retrieves all agent configurations from the store.
+            Output is a list of ConfigRecord objects.
+            """
+            configs = store.search(AGENT_CONFIGS_NAMESPACE)
+            if configs:
+                return list(map(lambda c: c.value, configs))
+            return []
+
+        # Create the React agent
+        react_agent = create_react_agent(
+            model=model,
+            tools=[get_configs],
+            prompt=PlannerMixin.SYSTEM_PROMPT
+        )
+        
+        # Create the node using the injected store and React agent
+        node = (
+            StateGraph(MessagesState)
+            .add_node('react_planner', react_agent)
+            .add_edge(START, "react_planner")
+            .add_edge("react_planner", END)
+            .compile(store=store)
+        )
+        return node
+
+
+class PsiGraph(StateGraph, PlannerMixin):
     def __init__(self):
         # Initialize StateGraph with the state schema
         super().__init__(state_schema=GraphState)
@@ -124,7 +223,7 @@ class PsiGraph(StateGraph):
         # Get or create planner node if not already in state
         if "planner_node_id" not in state or not state["planner_node_id"]:
             # Initialize the node registry dictionary if not present
-            planner_node_id = _get_or_create_node(store)
+            planner_node_id = PsiGraph._get_or_create_planner_node(store)
             
             initialized_node_ids = state.get("initialized_node_ids", set())
             initialized_node_ids.add(PLANNER_NODE_ID)
