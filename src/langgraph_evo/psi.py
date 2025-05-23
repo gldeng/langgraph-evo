@@ -1,4 +1,3 @@
-
 from langgraph_evo.core.config import ConfigRecord, GraphConfig, parse_graph_config
 from langgraph_evo.core.registry import PLANNER_NODE_ID, SUPERVISOR_NODE_ID
 from langgraph_evo.core.store import BaseStore
@@ -6,6 +5,7 @@ from langgraph_evo.core.state import GraphState
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.graph.graph import CompiledGraph
 from langgraph.graph.state import CompiledStateGraph
 from typing import Annotated, Dict, List, Optional, Union, Any
 from langgraph.store.base import BaseStore
@@ -16,7 +16,7 @@ from langgraph.prebuilt import InjectedState, InjectedStore, create_react_agent
 from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 import re
 
-node_registry: Dict[str, Any] = {}
+node_registry: Dict[str, CompiledGraph] = {}
 
 class PlannerMixin:
     SYSTEM_PROMPT = """You are an AI agent configurator that helps set up and run AI agent systems.
@@ -439,7 +439,7 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             # Process with the planner, passing the full conversation history
             # This allows the planner to understand context from previous interactions
             # which is essential for follow-up questions
-            planner_result = planner.invoke({"messages": messages})
+            planner_result = planner.invoke({"messages": messages}, debug=True)
 
             planner_response = planner_result["messages"][-1]
 
@@ -491,7 +491,7 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             node_registry[SUPERVISOR_NODE_ID] = ("__supervisor", supervisor_graph)
 
             # Pass the full message history to the graph for proper context in follow-up questions
-            result = supervisor_graph.invoke({"messages": messages})
+            result = supervisor_graph.invoke({"messages": messages}, debug=True)
             response = AIMessage(content=result["messages"][-1].content)
 
             print("Result:", response)

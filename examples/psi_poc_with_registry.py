@@ -209,7 +209,8 @@ def run_psi_system():
                     "metadata": {
                         "agent_id": ("root",)
                     }
-                }
+                },
+                debug = True
             )
             
             # Print the conversation history
