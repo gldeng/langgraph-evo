@@ -312,6 +312,21 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         super().__init__(state_schema=GraphState)
         from langgraph_evo.core.tool_registry import register_standard_tools
         register_standard_tools()
+
+        # Flow:
+        # 1. Attempts to process the user's question in supervisor node
+        #       - If successful, return the final answer (finalize node)
+        #       - If not successful and it's the first attempt, continue to planner node
+        #       - If not successful and it's not the first attempt, return the final answer (finalize node), reply "I'm sorry, I'm not able to complete the task."
+        # 2. Planner node:
+        #       - Get the agent config
+        #       - Create the graph
+        #       - Create/update the supervisor
+        #       - If successful, go to supervisor node
+        #       - If not successful, go to finalize node
+        # 3. Finalize node:
+        #       - Return the final answer
+
         # Add nodes using RunnableCallable for logic
         self.add_node("process", self._create_process_node())
         self.add_node("finalize", self._create_finalize_node())
