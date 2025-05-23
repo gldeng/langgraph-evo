@@ -37,6 +37,31 @@ def planner_node_handler(
         response = AIMessage(content="No configuration found.")
     return {"messages": messages + [response]}
 
+
+def _supervisor_can_handle_task(state, store, config):
+    """Check if the supervisor can handle the task."""
+
+    messages = state["messages"]
+    
+    updated_state = {
+        "messages": messages,
+    }
+
+    record = node_registry.get(SUPERVISOR_NODE_ID)
+    if not record:
+        return False, {}
+    _, supervisor_graph = record
+    # Check if the supervisor can handle the task
+    result = supervisor_graph.invoke({"messages": state["messages"]})
+    response = AIMessage(content=result["messages"][-1].content)
+    updated_state["messages"] = messages + [response]
+
+    print("Result:", response)
+    if "I'm not able to complete the task." in result["messages"][-1].content:
+        return False, {}
+    return True, updated_state
+
+
 def task_handler(
     state: Annotated[GraphState, InjectedState],
     store: Annotated[BaseStore, InjectedStore],
@@ -52,6 +77,11 @@ def task_handler(
     Returns:
         Updated state with task results
     """
+
+    can_handle_task, updated_state = _supervisor_can_handle_task(state, store, config)
+    if can_handle_task:
+        return updated_state
+
     messages = state["messages"]
     
     # Extract metadata from config if available

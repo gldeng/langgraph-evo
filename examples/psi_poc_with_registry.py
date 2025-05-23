@@ -159,7 +159,7 @@ def print_messages(messages):
             content = message.get('content', '')
             print(f"Content: {content}")
         else:
-            print(f"[{i}] {str(message)[:100]}...")
+            print(f"[{i}] {str(message)[:500]}...")
         print("-" * 40)
 
 def run_psi_system():
