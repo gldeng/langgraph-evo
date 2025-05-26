@@ -6,6 +6,9 @@ from langgraph.graph.message import add_messages, AnyMessage
 
 from langgraph_evo.core.config import ConfigRecord
 
+# Module-level cache for GraphState type hints to avoid repeated computation
+_GRAPHSTATE_TYPE_HINTS_CACHE: Optional[Dict[str, Any]] = None
+
 def use_last(left: Any, right: Any) -> Any:
     """Use the last non-None value."""
     return right if right is not None else left
@@ -39,8 +42,12 @@ class GraphState(TypedDict):
             )
             raise ValueError(msg)
         
-        # Get the type hints with annotations
-        type_hints = get_type_hints(GraphState, include_extras=True)
+        # Use cached type hints or compute and cache them
+        global _GRAPHSTATE_TYPE_HINTS_CACHE
+        if _GRAPHSTATE_TYPE_HINTS_CACHE is None:
+            _GRAPHSTATE_TYPE_HINTS_CACHE = get_type_hints(GraphState, include_extras=True)
+        
+        type_hints = _GRAPHSTATE_TYPE_HINTS_CACHE
         
         # Start with a copy of the left state
         merged = left.copy()
