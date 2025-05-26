@@ -2,7 +2,7 @@ from langgraph_evo.core.config import ConfigRecord, GraphConfig, parse_graph_con
 from langgraph_evo.core.registry import PLANNER_NODE_ID, SUPERVISOR_NODE_ID
 from langgraph_evo.core.store import BaseStore
 from langgraph_evo.core.state import GraphState
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, BaseMessage, ChatMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.graph import CompiledGraph
@@ -17,6 +17,37 @@ from langgraph.prebuilt import InjectedState, InjectedStore, create_react_agent
 from langgraph_evo.core.registry import AGENT_CONFIGS_NAMESPACE
 import re
 
+class ParentMessage(ChatMessage):
+    role: Literal["developer"] = "developer"
+    def __init__(
+        self, content: Union[str, list[Union[str, dict]]], **kwargs: Any
+    ) -> None:
+        """Create a ParentMessage.
+
+        Args:
+            content: The string contents of the message.
+            **kwargs: Additional fields.
+        """
+        super().__init__(content=content, role="developer", **kwargs)
+
+
+
+class ChildMessage(ChatMessage):
+    role: Literal["tool"] = "tool"
+    child_id: str
+    def __init__(
+        self, content: Union[str, list[Union[str, dict]]], child_id: str, **kwargs: Any
+    ) -> None:
+        """Create a ChildMessage.
+
+        Args:
+            content: The string contents of the message.
+            child_id: The ID of the child node that sent the message.
+            **kwargs: Additional fields.
+        """
+        super().__init__(content=content, role="tool", child_id=child_id, **kwargs)
+
+
 node_registry: Dict[str, CompiledGraph] = {}
 
 class PlannerMixin:
@@ -27,10 +58,16 @@ class PlannerMixin:
     2. For each configuration, analyze whether this configuration can solve the user's query
     3. If it can, return the configuration string along with other information
 
+    IMPORTANT: The configuration string MUST be valid YAML format. Follow these YAML rules:
+    - Use proper indentation (2 spaces per level)
+    - Quote string values that contain special characters, colons, or newlines
+    - Ensure all mapping keys end with a colon followed by a space
+    - Use proper list syntax with dashes
+    - Escape any special characters in string values
+
     Output format:
-    - If it can, return the configuration infromation with the following format:
     <agent_config>
-    Config string here
+    Valid YAML configuration string here
     </agent_config>
     <config_name>
     Config name here
@@ -42,20 +79,6 @@ class PlannerMixin:
     Config description here
     </config_description>
     - If it cannot, return "No configuration found"
-
-    Example output:
-    <agent_config>
-    Config string here
-    </agent_config>
-    <config_name>
-    Config name here
-    </config_name>
-    <config_version>
-    Config version here
-    </config_version>
-    <config_description>
-    Config description here
-    </config_description>
 
     Only do the following but not more than that:
     - Retrieve the agent configurations
@@ -373,6 +396,75 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         return RunnableCallable(PsiGraph.finalize_handler)
 
     @staticmethod
+    def _get_call_path(config: Dict[str, Any]) -> tuple[str, ...]:
+        config = PsiGraph._ensure_call_path(config)
+        return config['metadata']['call_path']
+
+    @staticmethod
+    def _ensure_call_path(config: Dict[str, Any]) -> Dict[str, Any]:
+        # Ensure metadata exists with call_path
+        if 'metadata' not in config:
+            config['metadata'] = {
+                'call_path': ()
+            }
+        elif 'call_path' not in config['metadata']:
+            config['metadata']['call_path'] = ()
+
+        return config
+
+    @staticmethod
+    def _extend_call_path(config: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+        config = PsiGraph._ensure_call_path(config)
+        # Ensure metadata exists with call_path
+        config['metadata']['call_path'] = config['metadata']['call_path'] + (node_id,)
+        return config
+
+    @staticmethod
+    def _get_parent_state(state: GraphState, config: Dict[str, Any]) -> GraphState:
+        config = PsiGraph._ensure_call_path(config)
+        call_path = config['metadata']['call_path']
+        if len(call_path) < 1:
+            raise ValueError("Call path is too short to get parent state")
+        parent_call_path = call_path[:-1]
+        if parent_call_path == ():
+            return state
+        return state["children_states"][parent_call_path]
+
+    @staticmethod
+    def _get_sub_state(state: GraphState, config: Dict[str, Any]) -> GraphState:
+        config = PsiGraph._ensure_call_path(config)
+        call_path = config['metadata']['call_path']
+        return state["children_states"].get(call_path, {"messages": []})
+
+    @staticmethod
+    def _format_message(message: BaseMessage) -> str:
+        if isinstance(message, ChildMessage):
+            return f"Child Agent [{message.child_id}]: {message.content}"
+        elif isinstance(message, ParentMessage):
+            return f"Parent Agent: {message.content}"
+        elif isinstance(message, HumanMessage):
+            return f"User: {message.content}"
+        else:
+            raise ValueError(f"Unknown message type: {type(message)}")
+
+    @staticmethod
+    def _get_relevant_messages(state: GraphState) -> str:
+        messages = []
+        for message in reversed(state["messages"]):
+            if isinstance(message, ChildMessage):
+                messages.append(message)
+            elif isinstance(message, ParentMessage):
+                messages.append(message)
+                break
+            elif isinstance(message, HumanMessage):
+                messages.append(message)
+                break
+            else:
+                raise ValueError(f"Unknown message type: {type(message)}")
+
+        return "\n".join([PsiGraph._format_message(message) for message in reversed(messages)])
+
+    @staticmethod
     def _route_from_supervisor(state: GraphState) -> Literal["finalize_success", "first_attempt_failed", "multiple_attempts_failed"]:
         """Route from supervisor node based on success and attempt count."""
         if state.get("supervisor_success", False):
@@ -405,27 +497,46 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
 
 
     @staticmethod
-    def _supervisor_can_handle_task(state, store, config):
+    def _supervisor_can_handle_task(state: GraphState, store: BaseStore, config: Dict[str, Any]):
         """Check if the supervisor can handle the task."""
 
-        messages = state["messages"]
-        
-        updated_state = {
-            "messages": messages,
-        }
+        parent_state = PsiGraph._get_parent_state(state, config)
+        sub_state = PsiGraph._get_sub_state(state, config)
+
+        sub_state["messages"].append(ParentMessage(content=f"I have received the following messages from the parent agent:\n\n{PsiGraph._get_relevant_messages(parent_state)}"))
 
         record = node_registry.get(SUPERVISOR_NODE_ID)
         if not record:
             return False, {}
         _, supervisor_graph = record
         # Check if the supervisor can handle the task
-        result = supervisor_graph.invoke({"messages": state["messages"]})
-        response = AIMessage(content=result["messages"][-1].content)
-        updated_state["messages"] = messages + [response]
+        result = supervisor_graph.invoke(sub_state)
 
-        print("Result:", response)
+        updated_state = {}
+        if (call_path:= PsiGraph._get_call_path(config)) == (): # root node
+            updated_state = {
+                "messages": [ChildMessage(content=result["messages"][-1].content, child_id=SUPERVISOR_NODE_ID)]
+            }
+        elif len(call_path) == 1:
+            updated_state = {
+                "messages": [ChildMessage(content=result["messages"][-1].content, child_id=SUPERVISOR_NODE_ID)],
+                "children_states": {
+                    call_path: result
+                }
+            }
+        else:
+            # non-root node
+            updated_state = {
+                "children_states": {
+                    call_path[:-1]: {
+                        "messages": [ChildMessage(content=result["messages"][-1].content, child_id=SUPERVISOR_NODE_ID)]
+                    },
+                    call_path: result
+                }
+            }
+
         if "I'm not able to complete the task." in result["messages"][-1].content:
-            return False, {}
+            return False, updated_state
         return True, updated_state
 
 
@@ -447,27 +558,20 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         Returns:
             Updated state with supervisor results and success status
         """
-        messages = state["messages"]
-        
+        config = PsiGraph._extend_call_path(config, "supervisor")
+
         # Initialize attempt count if not present
         attempt_count = state.get("attempt_count", 0) + 1
         
         # Try to handle task with existing supervisor
         can_handle_task, updated_state = PsiGraph._supervisor_can_handle_task(state, store, config)
         
-        # Update state with attempt tracking
-        result_state = {
-            "messages": updated_state.get("messages", messages),
-            "attempt_count": attempt_count,
-            "supervisor_success": can_handle_task
-        }
+        updated_state.update(
+            attempt_count=attempt_count,
+            supervisor_success=can_handle_task                
+        )
         
-        # Preserve other state fields
-        for key in ["planner_node_id", "initialized_node_ids", "planner_success"]:
-            if key in state:
-                result_state[key] = state[key]
-        
-        return result_state
+        return updated_state
 
     @staticmethod
     def planner_handler(
@@ -485,8 +589,25 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         Returns:
             Updated state with planner results and success status
         """
-        messages = state["messages"]
+
+        config = PsiGraph._extend_call_path(config, "planner")
+
+        parent_state = PsiGraph._get_parent_state(state, config)
+        sub_state = PsiGraph._get_sub_state(state, config)
+
+        sub_state["messages"].append(ParentMessage(content=f"I have received the following messages from the parent agent:\n\n{PsiGraph._get_relevant_messages(parent_state)}"))
+
         planner_success = False
+
+        updated_state = {
+            "messages": [],
+            "planner_node_id": None,
+            "initialized_node_ids": set(),
+            "planner_success": False,
+            "children_states": {
+                PsiGraph._get_call_path(config): sub_state
+            }
+        }
         
         # Extract metadata from config if available
         metadata = {}
@@ -502,23 +623,22 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             initialized_node_ids = state.get("initialized_node_ids", set())
             initialized_node_ids.add(PLANNER_NODE_ID)
             
-            result_state = {
-                "messages": messages,
-                "planner_node_id": planner_node_id,
-                "initialized_node_ids": initialized_node_ids
-            }
+            updated_state["planner_node_id"] = planner_node_id
+            updated_state["initialized_node_ids"] = initialized_node_ids
         else:
-            result_state = dict(state)
+            updated_state["planner_node_id"] = state["planner_node_id"]
+            updated_state["initialized_node_ids"] = state["initialized_node_ids"]
         
         # Get the planner node from registry
-        planner_node_id = result_state["planner_node_id"]
+        planner_node_id = updated_state["planner_node_id"]
         planner = node_registry[planner_node_id][1]
         
         try:
             # Process with the planner, passing the full conversation history
-            planner_result = planner.invoke({"messages": messages}, debug=True)
+            planner_result = planner.invoke(sub_state, debug=True)
             planner_response = planner_result["messages"][-1]
             content = planner_response.content if hasattr(planner_response, "content") else planner_response["content"]
+            updated_state["children_states"][PsiGraph._get_call_path(config)]= planner_result
         except (AttributeError, TypeError, KeyError) as e:
             print(f"Warning: Could not extract content from planner response: {e}")
             content = ""
@@ -526,15 +646,14 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         # Search for agent configuration
         match = re.search(r'<agent_config>(.*?)</agent_config>', content, re.DOTALL)
         if match:
-            agent_config_str = match.group(1)
+            agent_config_str = match.group(1).strip()
+            print(f"Extracted agent config:\n{agent_config_str}")
         else:
             print(f"Warning: Could not find agent_config in response: {content[:100]}...")
-            response = AIMessage(content="Sorry, I'm unable to create an agent to perform the task.")
-            result_state.update({
-                "messages": messages + [response],
-                "planner_success": False
-            })
-            return result_state
+            response = ChildMessage(content="Sorry, I'm unable to create an agent to perform the task.", child_id=PLANNER_NODE_ID)
+            updated_state["messages"].append(response)
+            updated_state["planner_success"] = False
+            return updated_state
 
         # Extract additional configuration fields
         config_name_match = re.search(r'<config_name>(.*?)</config_name>', content, re.DOTALL)
@@ -558,32 +677,30 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             # Create the graph using the registry
             graph_raw = PsiGraph._create_graph(parsed_config)
             graph = graph_raw.compile(name=f"{config_name}__{config_version}", store=store)
-            result_state["initialized_node_ids"].add(graph.name)
+            updated_state["initialized_node_ids"].add(graph.name)
 
             node_registry[graph.name] = (config_description, graph)
-            supervisor_graph = PsiGraph._create_supervisor([name for name in result_state["initialized_node_ids"] if not name.startswith("__")], store)
+            supervisor_graph = PsiGraph._create_supervisor([name for name in updated_state["initialized_node_ids"] if not name.startswith("__")], store)
             node_registry[SUPERVISOR_NODE_ID] = ("__supervisor", supervisor_graph)
 
             planner_success = True
-            response = AIMessage(content="I've successfully set up the agents and am ready to process your request.")
+            response = ChildMessage(content="I've successfully set up the agents and am ready to process your request.", child_id=PLANNER_NODE_ID)
             print("Planner succeeded in creating supervisor")
         except Exception as e:
             print(f"Error creating/running agent: {e}")
-            response = AIMessage(content="I processed your request but encountered issues with my agent configuration system.")
+            print(f"Failed YAML content:\n{agent_config_str}")
+            response = ChildMessage(content=f"I encountered a configuration error: {str(e)}. Please check the agent configuration format.", child_id=PLANNER_NODE_ID)
             planner_success = False
         
-        # Update result state
-        result_state.update({
-            "messages": messages + [response],
-            "planner_success": planner_success
-        })
+        updated_state["messages"].append(response)
+        updated_state["planner_success"] = planner_success
         
         # Preserve other state fields
         for key in ["attempt_count", "supervisor_success"]:
             if key in state:
-                result_state[key] = state[key]
+                updated_state[key] = state[key]
         
-        return result_state
+        return updated_state
 
     @staticmethod
     def finalize_handler(
