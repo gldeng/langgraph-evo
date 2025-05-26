@@ -24,6 +24,26 @@ def merge_if_theres_value(left: Optional[Dict[str, GraphState]], right: Optional
             left[key] = GraphState.reducer(left[key], value)
     return left
 
+def use_last_int(left: int, right: int) -> int:
+    """Use the last non-None integer value."""
+    return right if right is not None else left
+
+def use_last_bool(left: bool, right: bool) -> bool:
+    """Use the last non-None boolean value."""
+    return right if right is not None else left
+
+def use_last_str(left: str, right: str) -> str:
+    """Use the last non-None string value."""
+    return right if right is not None else left
+
+def union_sets(left: Optional[set], right: Optional[set]) -> set:
+    """Union two sets, handling None values."""
+    if left is None:
+        return right if right is not None else set()
+    if right is None:
+        return left
+    return left.union(right)
+
 class GraphState(TypedDict):
     """State for the graph execution."""
     lineage: Annotated[List[str], use_last]
@@ -31,7 +51,12 @@ class GraphState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     config: Annotated[ConfigRecord, use_last]
     children_states: Annotated[Dict[str, GraphState], merge_if_theres_value]
-    initialized_node_ids: Annotated[set[str], set.union]
+    initialized_node_ids: Annotated[set[str], union_sets]
+    # Added fields for attempt tracking and workflow control
+    attempt_count: Annotated[int, use_last_int]
+    supervisor_success: Annotated[bool, use_last_bool]
+    planner_success: Annotated[bool, use_last_bool]
+    planner_node_id: Annotated[str, use_last_str]
 
     @staticmethod
     def reducer(left: Optional[GraphState], right: Optional[GraphState], **kwargs: Any) -> GraphState:

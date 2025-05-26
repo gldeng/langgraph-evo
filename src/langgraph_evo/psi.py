@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.graph import CompiledGraph
 from langgraph.graph.state import CompiledStateGraph
 from typing import Annotated, Dict, List, Optional, Union, Any
+from typing_extensions import Literal
 from langgraph.store.base import BaseStore
 from langgraph.types import All, Checkpointer
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -327,22 +328,69 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         # 3. Finalize node:
         #       - Return the final answer
 
-        # Add nodes using RunnableCallable for logic
-        self.add_node("process", self._create_process_node())
+        # Add nodes for the new workflow
+        self.add_node("supervisor", self._create_supervisor_node())
+        self.add_node("planner", self._create_planner_node())
         self.add_node("finalize", self._create_finalize_node())
-        self.add_edge("process", "finalize")
-        self.add_edge("finalize", END)
         
-        # Set entry point
-        self.set_entry_point("process")
+        # Set entry point to supervisor
+        self.add_edge(START, "supervisor")
+        
+        # Add conditional edges from supervisor
+        self.add_conditional_edges(
+            "supervisor",
+            self._route_from_supervisor,
+            {
+                "finalize_success": "finalize",
+                "first_attempt_failed": "planner", 
+                "multiple_attempts_failed": "finalize"
+            }
+        )
+        
+        # Add conditional edges from planner
+        self.add_conditional_edges(
+            "planner",
+            self._route_from_planner,
+            {
+                "planner_success": "supervisor",
+                "planner_failed": "finalize"
+            }
+        )
+        
+        # Finalize node goes to END
+        self.add_edge("finalize", END)
 
-    def _create_process_node(self) -> RunnableCallable:
-        """Private method to create the processing node."""
-        return RunnableCallable(PsiGraph.task_handler)
+    def _create_supervisor_node(self) -> RunnableCallable:
+        """Private method to create the supervisor node."""
+        return RunnableCallable(PsiGraph.supervisor_handler)
+
+    def _create_planner_node(self) -> RunnableCallable:
+        """Private method to create the planner node."""
+        return RunnableCallable(PsiGraph.planner_handler)
 
     def _create_finalize_node(self) -> RunnableCallable:
         """Private method to create the finalizing node."""
-        return RunnableCallable(lambda state: state)
+        return RunnableCallable(PsiGraph.finalize_handler)
+
+    @staticmethod
+    def _route_from_supervisor(state: GraphState) -> Literal["finalize_success", "first_attempt_failed", "multiple_attempts_failed"]:
+        """Route from supervisor node based on success and attempt count."""
+        if state.get("supervisor_success", False):
+            return "finalize_success"
+        
+        attempt_count = state.get("attempt_count", 0)
+        if attempt_count <= 1:
+            return "first_attempt_failed"
+        else:
+            return "multiple_attempts_failed"
+
+    @staticmethod 
+    def _route_from_planner(state: GraphState) -> Literal["planner_success", "planner_failed"]:
+        """Route from planner node based on success."""
+        if state.get("planner_success", False):
+            return "planner_success"
+        else:
+            return "planner_failed"
 
     def get_graph(self,
         checkpointer: Checkpointer = None,
@@ -381,13 +429,15 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         return True, updated_state
 
 
+
+
     @staticmethod
-    def task_handler(
+    def supervisor_handler(
         state: GraphState,
         store: BaseStore,
         config: Dict[str, Any] = None
     ):
-        """A node handler that processes messages using the agent system.
+        """Supervisor node handler that attempts to process user questions.
         
         Args:
             state: The current state
@@ -395,14 +445,48 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             config: Optional configuration parameters
             
         Returns:
-            Updated state with task results
+            Updated state with supervisor results and success status
         """
-
-        can_handle_task, updated_state = PsiGraph._supervisor_can_handle_task(state, store, config)
-        if can_handle_task:
-            return updated_state
-
         messages = state["messages"]
+        
+        # Initialize attempt count if not present
+        attempt_count = state.get("attempt_count", 0) + 1
+        
+        # Try to handle task with existing supervisor
+        can_handle_task, updated_state = PsiGraph._supervisor_can_handle_task(state, store, config)
+        
+        # Update state with attempt tracking
+        result_state = {
+            "messages": updated_state.get("messages", messages),
+            "attempt_count": attempt_count,
+            "supervisor_success": can_handle_task
+        }
+        
+        # Preserve other state fields
+        for key in ["planner_node_id", "initialized_node_ids", "planner_success"]:
+            if key in state:
+                result_state[key] = state[key]
+        
+        return result_state
+
+    @staticmethod
+    def planner_handler(
+        state: GraphState,
+        store: BaseStore,
+        config: Dict[str, Any] = None
+    ):
+        """Planner node handler that gets agent config and creates/updates supervisor.
+        
+        Args:
+            state: The current state
+            store: The store to use
+            config: Optional configuration parameters
+            
+        Returns:
+            Updated state with planner results and success status
+        """
+        messages = state["messages"]
+        planner_success = False
         
         # Extract metadata from config if available
         metadata = {}
@@ -418,46 +502,22 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
             initialized_node_ids = state.get("initialized_node_ids", set())
             initialized_node_ids.add(PLANNER_NODE_ID)
             
-            updated_state = {
+            result_state = {
                 "messages": messages,
                 "planner_node_id": planner_node_id,
                 "initialized_node_ids": initialized_node_ids
             }
         else:
-            updated_state = state
+            result_state = dict(state)
         
         # Get the planner node from registry
-        planner_node_id = updated_state["planner_node_id"]
+        planner_node_id = result_state["planner_node_id"]
         planner = node_registry[planner_node_id][1]
         
         try:
-            # Find the last user message for fallback processing if needed
-            last_user_message = None
-            for msg in reversed(messages):
-                # Handle both dict and Message object types
-                if isinstance(msg, dict) and msg.get("role") == "user":
-                    last_user_message = msg
-                    break
-                elif hasattr(msg, "type") and msg.type == "human":
-                    # Convert to dict format if it's a Message object
-                    last_user_message = HumanMessage(content=msg.content)
-                    break
-            
-            if not last_user_message and messages:
-                # If no user message found, use the last message regardless of type
-                last_msg = messages[-1]
-                if isinstance(last_msg, dict):
-                    last_user_message = last_msg
-                else:
-                    last_user_message = HumanMessage(content=last_msg.content)
-            
             # Process with the planner, passing the full conversation history
-            # This allows the planner to understand context from previous interactions
-            # which is essential for follow-up questions
             planner_result = planner.invoke({"messages": messages}, debug=True)
-
             planner_response = planner_result["messages"][-1]
-
             content = planner_response.content if hasattr(planner_response, "content") else planner_response["content"]
         except (AttributeError, TypeError, KeyError) as e:
             print(f"Warning: Could not extract content from planner response: {e}")
@@ -470,8 +530,11 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         else:
             print(f"Warning: Could not find agent_config in response: {content[:100]}...")
             response = AIMessage(content="Sorry, I'm unable to create an agent to perform the task.")
-            updated_state["messages"] = messages + [response]
-            return updated_state
+            result_state.update({
+                "messages": messages + [response],
+                "planner_success": False
+            })
+            return result_state
 
         # Extract additional configuration fields
         config_name_match = re.search(r'<config_name>(.*?)</config_name>', content, re.DOTALL)
@@ -488,34 +551,70 @@ class PsiGraph(StateGraph, PlannerMixin, GraphCreatorMixin, SupervisorMixin):
         print(f"Config Version: {config_version}")
         print(f"Config Description: {config_description[:50]}..." if len(config_description) > 50 else f"Config Description: {config_description}")
 
-        # Add a response to the message history
-        response = AIMessage(content="I'm analyzing your request...")
-        supervisor_graph = None
-        
         try:
             parsed_config = parse_graph_config(agent_config_str)
             print("Successfully parsed the agent configuration")
 
-            # Create the graph using the registry (no need to pass tools explicitly)
+            # Create the graph using the registry
             graph_raw = PsiGraph._create_graph(parsed_config)
             graph = graph_raw.compile(name=f"{config_name}__{config_version}", store=store)
-            updated_state["initialized_node_ids"].add(graph.name)
+            result_state["initialized_node_ids"].add(graph.name)
 
             node_registry[graph.name] = (config_description, graph)
-            supervisor_graph = PsiGraph._create_supervisor([name for name in updated_state["initialized_node_ids"] if not name.startswith("__")], store)
+            supervisor_graph = PsiGraph._create_supervisor([name for name in result_state["initialized_node_ids"] if not name.startswith("__")], store)
             node_registry[SUPERVISOR_NODE_ID] = ("__supervisor", supervisor_graph)
 
-            # Pass the full message history to the graph for proper context in follow-up questions
-            result = supervisor_graph.invoke({"messages": messages}, debug=True)
-            response = AIMessage(content=result["messages"][-1].content)
-
-            print("Result:", response)
+            planner_success = True
+            response = AIMessage(content="I've successfully set up the agents and am ready to process your request.")
+            print("Planner succeeded in creating supervisor")
         except Exception as e:
             print(f"Error creating/running agent: {e}")
             response = AIMessage(content="I processed your request but encountered issues with my agent configuration system.")
+            planner_success = False
         
-        # Return updated state with our response
-        updated_state["messages"] = messages + [response]
+        # Update result state
+        result_state.update({
+            "messages": messages + [response],
+            "planner_success": planner_success
+        })
+        
+        # Preserve other state fields
+        for key in ["attempt_count", "supervisor_success"]:
+            if key in state:
+                result_state[key] = state[key]
+        
+        return result_state
 
-        return updated_state
+    @staticmethod
+    def finalize_handler(
+        state: GraphState,
+        store: BaseStore,
+        config: Dict[str, Any] = None
+    ):
+        """Finalize node handler that returns final answers.
+        
+        Args:
+            state: The current state
+            store: The store to use
+            config: Optional configuration parameters
+            
+        Returns:
+            Final state with appropriate messages
+        """
+        messages = state["messages"]
+        attempt_count = state.get("attempt_count", 0)
+        supervisor_success = state.get("supervisor_success", False)
+        
+        # If we reach finalize after multiple failed attempts, add error message
+        if attempt_count > 1 and not supervisor_success:
+            error_message = AIMessage(content="I'm sorry, I'm not able to complete the task.")
+            messages = messages + [error_message]
+            print("Finalize: Multiple attempts failed, returning error message")
+        else:
+            print(f"Finalize: Returning final answer (supervisor_success: {supervisor_success})")
+        
+        # Return final state
+        final_state = dict(state)
+        final_state["messages"] = messages
+        return final_state
 
