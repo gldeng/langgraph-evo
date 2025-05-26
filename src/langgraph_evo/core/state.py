@@ -13,7 +13,7 @@ def use_last(left: Any, right: Any) -> Any:
     """Use the last non-None value."""
     return right if right is not None else left
 
-def merge_if_theres_value(left: Optional[Dict[str, GraphState]], right: Optional[Dict[str, GraphState]]) -> Dict[str, GraphState]:
+def merge_if_theres_value(left: Optional[Dict[tuple[str, ...], GraphState]], right: Optional[Dict[tuple[str, ...], GraphState]]) -> Dict[tuple[str, ...], GraphState]:
     """Merge if there is a value."""
     if left is None or right is None:
         return left if left is not None else right
@@ -50,7 +50,7 @@ class GraphState(TypedDict):
     agent_id: Annotated[str, use_last]
     messages: Annotated[list[AnyMessage], add_messages]
     config: Annotated[ConfigRecord, use_last]
-    children_states: Annotated[Dict[str, GraphState], merge_if_theres_value]
+    children_states: Annotated[Dict[tuple[str, ...], GraphState], merge_if_theres_value]
     initialized_node_ids: Annotated[set[str], union_sets]
     # Added fields for attempt tracking and workflow control
     attempt_count: Annotated[int, use_last_int]
